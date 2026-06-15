@@ -29,40 +29,25 @@ def intersect_polar(l1, l2):
     except np.linalg.LinAlgError:
         return None
 
-def get_exterior_rho(lines, center_val):
-    """Finds all significant parallel clusters and returns the rho of the outermost one."""
+def average_lines(lines, target_theta):
+    """Averages all lines, aligning their theta and rho to a target direction."""
     if not lines: return None
-    lines.sort(key=lambda x: x[0])
-    
-    # Cluster by rho
-    clusters = []
-    curr = [lines[0]]
-    for i in range(1, len(lines)):
-        if abs(lines[i][0] - lines[i-1][0]) < 40:
-            curr.append(lines[i])
-        else:
-            clusters.append(curr)
-            curr = [lines[i]]
-    clusters.append(curr)
-    
-    # Summarize clusters
-    summaries = []
-    for c in clusters:
-        summaries.append({
-            'avg_rho': np.mean([l[0] for l in c]),
-            'count': len(c)
-        })
-    
-    # Sort by prominence
-    summaries.sort(key=lambda x: x['count'], reverse=True)
-    
-    # Define 'significant' as having at least 30% of the max count
-    max_count = summaries[0]['count']
-    significant = [s for s in summaries if s['count'] >= max_count * 0.3]
-    
-    # Among significant clusters, pick the one furthest from center_val
-    significant.sort(key=lambda x: abs(x['avg_rho'] - center_val), reverse=True)
-    return significant[0]['avg_rho']
+    rhos = []
+    thetas = []
+    for rho, theta in lines:
+        diff = theta - target_theta
+        # Bring diff to [-pi/2, pi/2] bounds by flipping the line vector if needed
+        while diff > math.pi/2:
+            diff -= math.pi
+            theta -= math.pi
+            rho = -rho
+        while diff < -math.pi/2:
+            diff += math.pi
+            theta += math.pi
+            rho = -rho
+        rhos.append(rho)
+        thetas.append(theta)
+    return np.mean(rhos), np.mean(thetas)
 
 
 def main():
@@ -78,6 +63,7 @@ def main():
         return
         
     h, w = img.shape[:2]
+    print(f"pixel: {h}, {w}")
     
     # === STEP 1. Blur the image to reduce noise ===
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -93,7 +79,7 @@ def main():
     
     # === STEP 3. When the magnitude is greater than a threshold, mark it as white ===
     # Using 97th percentile ensures we only keep the absolute strongest gradients
-    threshold_val = np.percentile(mag, 97)
+    threshold_val = np.percentile(mag, 99)
     mask = (mag > threshold_val).astype(np.uint8) * 255
     
     # === STEP 4. Output the processed image as debug image ===
@@ -103,25 +89,48 @@ def main():
     cv2.imwrite(debug_path, mask)
     
     # === STEP 5. Find two perpendicular edges and overlay ===
-    lines = cv2.HoughLines(mask, 1, np.pi/180, 150)
+    # Use finer resolution (np.pi/1800) for sub-degree (0.1 deg) precision
+    lines = cv2.HoughLines(mask, 1, np.pi/180, 500)
     if lines is None:
         print(f"No strong lines found in {image_path}")
         return
-        
+    
+    print(f"len: {lines.size}")
+    print(lines)
     # Group by theta to find the dominant angle
-    angle_bins = {}
+    angle_clusters = {}
     for line in lines:
         theta = line[0][1]
-        deg = int(round(math.degrees(theta))) % 180
-        if deg not in angle_bins:
-            angle_bins[deg] = []
-        angle_bins[deg].append(theta)
+        deg_float = math.degrees(theta)
+        
+        # Filter out 45-deg artifacts caused by thick pixelated masks. 
+        # True tilt is very small, so we only consider lines near 0/180 or 90.
+        if not ((deg_float < 15 or deg_float > 165) or (75 < deg_float < 105)):
+            continue
+            
+        mdeg = int(round(deg_float * 1000)) % 180000
+        
+        # Group similar mdeg values to avoid splitting a single peak
+        added = False
+        for key_mdeg in angle_clusters.keys():
+            if abs(mdeg - key_mdeg) < 5000 or abs(mdeg - key_mdeg) > 175000:
+                angle_clusters[key_mdeg].append(theta)
+                added = True
+                break
+        if not added:
+            angle_clusters[mdeg] = [theta]
+
+    if not angle_clusters:
+        print(f"No valid axis-aligned lines found in {image_path}")
+        return
+    
 
     # Find the most prominent angle (bin with most lines)
-    best_bin = max(angle_bins, key=lambda k: len(angle_bins[k]))
-    best_base_theta = np.mean(angle_bins[best_bin])
+    best_bin = max(angle_clusters, key=lambda k: len(angle_clusters[k]))
+    best_base_theta = np.mean(angle_clusters[best_bin])
+    print(best_base_theta)
     
-    # Enforce perpendicularity
+    # Enforce perpendicularity to gather the lines properly
     orthogonal_theta = (best_base_theta + math.pi/2) % math.pi
 
     # Gather lines for these two fixed perpendicular angles
@@ -145,16 +154,13 @@ def main():
         theta_h, theta_v = orthogonal_theta, best_base_theta
         lines_h, lines_v = group2_lines, group1_lines
 
-    # Find exterior rho
-    rho_h = get_exterior_rho(lines_h, h/2)
-    rho_v = get_exterior_rho(lines_v, w/2)
+    # Average all horizontal and vertical lines
+    line_h = average_lines(lines_h, theta_h)
+    line_v = average_lines(lines_v, theta_v)
     
-    if rho_h is None or rho_v is None:
-        print(f"Could not isolate outermost edges in {image_path}")
+    if line_h is None or line_v is None:
+        print(f"Could not calculate average edges in {image_path}")
         return
-
-    line_h = (rho_h, theta_h)
-    line_v = (rho_v, theta_v)
 
     # Intersection
     intersect = intersect_polar(line_h, line_v)
@@ -172,8 +178,8 @@ def main():
         font = cv2.FONT_HERSHEY_SIMPLEX
         cv2.putText(overlay, f"Int: {intersect}", (intersect[0]+70, intersect[1]-70), font, 2.5, (255, 255, 255), 5)
         
-        h_tilt = math.degrees(theta_h) - 90
-        v_tilt = math.degrees(theta_v)
+        h_tilt = math.degrees(line_h[1]) - 90
+        v_tilt = math.degrees(line_v[1])
         if v_tilt >= 90: v_tilt -= 180
         cv2.putText(overlay, f"H-Tilt: {h_tilt:.2f} deg", (50, 90), font, 2.2, (0, 255, 0), 5)
         cv2.putText(overlay, f"V-Tilt: {v_tilt:.2f} deg", (50, 180), font, 2.2, (255, 0, 0), 5)
