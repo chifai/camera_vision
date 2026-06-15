@@ -29,10 +29,12 @@ def intersect_polar(l1, l2):
     except np.linalg.LinAlgError:
         return None
 
-def get_best_rho(lines, center_val):
-    """Clusters lines and picks the one furthest from center_val."""
+def get_exterior_rho(lines, center_val):
+    """Finds the two most prominent parallel clusters and returns the rho of the outermost one."""
     if not lines: return None
     lines.sort(key=lambda x: x[0])
+    
+    # Cluster by rho
     clusters = []
     curr = [lines[0]]
     for i in range(1, len(lines)):
@@ -43,21 +45,29 @@ def get_best_rho(lines, center_val):
             curr = [lines[i]]
     clusters.append(curr)
     
+    # Summarize clusters by prominence (count)
     summaries = []
     for c in clusters:
-        avg_rho = np.mean([l[0] for l in c])
-        summaries.append({'rho': avg_rho, 'count': len(c)})
+        summaries.append({
+            'avg_rho': np.mean([l[0] for l in c]),
+            'count': len(c)
+        })
     
-    # Sort by prominence
+    # Sort by prominence (number of lines in Hough space)
     summaries.sort(key=lambda x: x['count'], reverse=True)
     
-    # If multiple prominent clusters, pick outermost
-    if len(summaries) >= 2 and summaries[1]['count'] > summaries[0]['count'] * 0.6:
-        if abs(summaries[0]['rho'] - center_val) > abs(summaries[1]['rho'] - center_val):
-            return summaries[0]['rho']
-        else:
-            return summaries[1]['rho']
-    return summaries[0]['rho']
+    if len(summaries) < 2:
+        return summaries[0]['avg_rho']
+    
+    # We have at least two prominent parallel edges (likely interior and exterior)
+    line1 = summaries[0]['avg_rho']
+    line2 = summaries[1]['avg_rho']
+    
+    # Pick the one furthest from the image center (Exterior)
+    if abs(line1 - center_val) > abs(line2 - center_val):
+        return line1
+    else:
+        return line2
 
 def main():
     if len(sys.argv) > 1:
@@ -88,20 +98,16 @@ def main():
         deg = int(round(math.degrees(theta))) % 180
         angle_bins[deg] = angle_bins.get(deg, 0) + 1
 
-    # Find the most prominent angle
     best_base_deg = max(angle_bins, key=angle_bins.get)
     best_base_theta = math.radians(best_base_deg)
     
-    # PERPENDICULAR CONSTRAINT: 
-    # Force orthogonal angle (theta2 = theta1 + 90 deg)
+    # PERPENDICULAR CONSTRAINT
     orthogonal_theta = (best_base_theta + math.pi/2) % math.pi
 
     # Gather lines for these two fixed perpendicular angles
-    group1_lines = []
-    group2_lines = []
+    group1_lines, group2_lines = [], []
     for line in lines:
         rho, theta = line[0]
-        # Allow small tolerance for gathering, but we will force the angle later
         if abs(theta - best_base_theta) < math.radians(10) or abs(theta - best_base_theta + math.pi) < math.radians(10):
             group1_lines.append((rho, theta))
         elif abs(theta - orthogonal_theta) < math.radians(10) or abs(theta - orthogonal_theta + math.pi) < math.radians(10):
@@ -110,7 +116,7 @@ def main():
     if not group1_lines or not group2_lines:
         return print("Failed to find perpendicular edges.")
 
-    # Determine which is H and V based on being closer to 90 deg
+    # Determine which is H and V
     if abs(best_base_theta - math.pi/2) < abs(orthogonal_theta - math.pi/2):
         theta_h, theta_v = best_base_theta, orthogonal_theta
         lines_h, lines_v = group1_lines, group2_lines
@@ -118,11 +124,10 @@ def main():
         theta_h, theta_v = orthogonal_theta, best_base_theta
         lines_h, lines_v = group2_lines, group1_lines
 
-    # Find best rho (outermost) for each
-    rho_h = get_best_rho(lines_h, h/2)
-    rho_v = get_best_rho(lines_v, w/2)
+    # TWO-LINE APPROACH: Find exterior rho from the two most prominent parallel edges
+    rho_h = get_exterior_rho(lines_h, h/2)
+    rho_v = get_exterior_rho(lines_v, w/2)
 
-    # FINAL PERPENDICULAR LINES
     line_h = (rho_h, theta_h)
     line_v = (rho_v, theta_v)
 
@@ -136,7 +141,7 @@ def main():
     cv2.line(overlay, p2_1, p2_2, (255, 0, 0), 6) # V
 
     if intersect:
-        cv2.circle(overlay, intersect, 35, (0, 0, 255), -1)
+        cv2.circle(overlay, intersect, 10, (0, 0, 255), -1)
         font = cv2.FONT_HERSHEY_SIMPLEX
         cv2.putText(overlay, f"Int: {intersect}", (intersect[0]+70, intersect[1]-70), font, 2.5, (255, 255, 255), 5)
         cv2.putText(overlay, f"H-Tilt: {math.degrees(theta_h)-90:.2f} deg", (50, 90), font, 2.2, (0, 255, 0), 5)
