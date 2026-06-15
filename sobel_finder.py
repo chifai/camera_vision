@@ -63,7 +63,6 @@ def main():
         return
         
     h, w = img.shape[:2]
-    print(f"pixel: {h}, {w}")
     
     # === STEP 1. Blur the image to reduce noise ===
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -94,9 +93,7 @@ def main():
     if lines is None:
         print(f"No strong lines found in {image_path}")
         return
-    
-    print(f"len: {lines.size}")
-    print(lines)
+        
     # Group by theta to find the dominant angle
     angle_clusters = {}
     for line in lines:
@@ -128,7 +125,6 @@ def main():
     # Find the most prominent angle (bin with most lines)
     best_bin = max(angle_clusters, key=lambda k: len(angle_clusters[k]))
     best_base_theta = np.mean(angle_clusters[best_bin])
-    print(best_base_theta)
     
     # Enforce perpendicularity to gather the lines properly
     orthogonal_theta = (best_base_theta + math.pi/2) % math.pi
@@ -166,7 +162,15 @@ def main():
     intersect = intersect_polar(line_h, line_v)
     overlay = img.copy()
 
-    # Draw lines
+    # Draw all individual detected lines thinly
+    for rho, theta in lines_h:
+        p1, p2 = polar_to_points(rho, theta)
+        cv2.line(overlay, p1, p2, (150, 255, 150), 1) # Thin light green
+    for rho, theta in lines_v:
+        p1, p2 = polar_to_points(rho, theta)
+        cv2.line(overlay, p1, p2, (255, 150, 150), 1) # Thin light blue
+
+    # Draw final averaged lines
     p1_1, p1_2 = polar_to_points(*line_h)
     p2_1, p2_2 = polar_to_points(*line_v)
     cv2.line(overlay, p1_1, p1_2, (0, 255, 0), 6) # H - Green
