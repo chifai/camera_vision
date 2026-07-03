@@ -22,6 +22,10 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as R_scipy
 
+FONT_SCALE = 0.2
+LINE_WIDTH = 1
+TEXT_WIDTH = 1
+
 def draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
     """Draws detected ArUco markers with custom line width and larger, highly visible font."""
     if ids is None or corners is None:
@@ -69,6 +73,58 @@ def draw_detected_corners_charuco_custom(image, corners, ids, corner_radius=10, 
         # Yellow text (contrasts nicely against markers and the red crosshair)
         cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), text_thickness, cv2.LINE_AA)
 
+def calculate_collinearity_distortion(corners, ids, squares_x):
+    """
+    Fits straight lines to rows/columns of corners and calculates the deviation in pixels
+    to quantify lens distortion.
+    """
+    if corners is None or len(corners) < 3:
+        return None, None
+        
+    num_cols = squares_x - 1
+    row_corners = {}
+    col_corners = {}
+    
+    for i, corner_id in enumerate(ids.flatten()):
+        r = corner_id // num_cols
+        c = corner_id % num_cols
+        pt = corners[i][0]
+        
+        if r not in row_corners:
+            row_corners[r] = []
+        row_corners[r].append(pt)
+        
+        if c not in col_corners:
+            col_corners[c] = []
+        col_corners[c].append(pt)
+        
+    all_deviations = []
+    
+    # Fit lines to rows
+    for r, pts in row_corners.items():
+        if len(pts) >= 3:
+            pts = np.array(pts)
+            vx, vy, cx, cy = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+            for pt in pts:
+                d = abs((pt[0] - cx) * vy - (pt[1] - cy) * vx)
+                all_deviations.append(d[0])
+                
+    # Fit lines to columns
+    for c, pts in col_corners.items():
+        if len(pts) >= 3:
+            pts = np.array(pts)
+            vx, vy, cx, cy = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+            for pt in pts:
+                d = abs((pt[0] - cx) * vy - (pt[1] - cy) * vx)
+                all_deviations.append(d[0])
+                
+    if not all_deviations:
+        return None, None
+        
+    max_dev = float(np.max(all_deviations))
+    rms_dev = float(np.sqrt(np.mean(np.square(all_deviations))))
+    return max_dev, rms_dev
+
 def main():
     parser = argparse.ArgumentParser(description="Detect Charuco board and estimate pose/pixel-to-mm conversion.")
     parser.add_argument("image_path", type=str, help="Path to the input image (e.g. raw/cameraaligner_data/rightcamera_chauro.png)")
@@ -77,13 +133,13 @@ def main():
     parser.add_argument("--square_length", type=float, default=4.0, help="Chessboard square side length in mm (default: 4.0)")
     parser.add_argument("--marker_length", type=float, default=3.0, help="ArUco marker side length in mm (default: 3.0)")
     parser.add_argument("--focal_length", type=float, default=None, help="Assumed focal length in pixels. Defaults to max(width, height)")
-    parser.add_argument("--marker_line_width", type=int, default=5, help="Line width for drawing ArUco markers (default: 5)")
-    parser.add_argument("--marker_font_size", type=float, default=1.5, help="Font size (scale) for marker IDs (default: 1.5)")
-    parser.add_argument("--marker_text_thickness", type=int, default=3, help="Text thickness for marker IDs (default: 3)")
-    parser.add_argument("--corner_radius", type=int, default=10, help="Radius for drawing Charuco corners (default: 10)")
-    parser.add_argument("--corner_line_width", type=int, default=3, help="Line width for drawing Charuco corners (default: 3)")
-    parser.add_argument("--corner_font_size", type=float, default=1.2, help="Font size (scale) for Charuco corner IDs (default: 1.2)")
-    parser.add_argument("--corner_text_thickness", type=int, default=2, help="Text thickness for Charuco corner IDs (default: 2)")
+    parser.add_argument("--marker_line_width", type=int, default=LINE_WIDTH, help="Line width for drawing ArUco markers (default: 5)")
+    parser.add_argument("--marker_font_size", type=float, default=FONT_SCALE, help="Font size (scale) for marker IDs (default: 1.5)")
+    parser.add_argument("--marker_text_thickness", type=int, default=TEXT_WIDTH, help="Text thickness for marker IDs (default: 3)")
+    parser.add_argument("--corner_radius", type=int, default=1, help="Radius for drawing Charuco corners (default: 10)")
+    parser.add_argument("--corner_line_width", type=int, default=LINE_WIDTH, help="Line width for drawing Charuco corners (default: 3)")
+    parser.add_argument("--corner_font_size", type=float, default=FONT_SCALE, help="Font size (scale) for Charuco corner IDs (default: 1.2)")
+    parser.add_argument("--corner_text_thickness", type=int, default=TEXT_WIDTH, help="Text thickness for Charuco corner IDs (default: 2)")
     args = parser.parse_args()
 
     # 1. Load the Image
@@ -192,12 +248,24 @@ def main():
         mm_per_px_h, mm_per_px_v = None, None
         print("Not enough Charuco corners detected to estimate local pixel-to-mm conversion factors.")
 
+    # 4.5. Estimate Collinearity Distortion (Line Straightness)
+    collin_max, collin_rms = calculate_collinearity_distortion(charuco_corners, charuco_ids, args.squares_x)
+    if collin_max is not None:
+        print("\n--- Collinearity Distortion Analysis (Line Straightness) ---")
+        print(f"  Max line deviation: {collin_max:.3f} pixels")
+        print(f"  RMS line deviation: {collin_rms:.3f} pixels")
+    else:
+        print("\n--- Collinearity Distortion Analysis (Line Straightness) ---")
+        print("  Not enough points per row/col to fit straight lines (need >= 3).")
+
     # 5. Pose Estimation and 3D Rotation Angles
     annotated_img = img.copy()
     pose_depth = None
     mm_per_px_pose = None
     rvec, tvec = None, None
     euler_xyz = None
+    reproj_mean = None
+    reproj_max = None
     
     if charuco_corners is not None and len(charuco_corners) >= 4:
         # Form 3D-2D point correspondences
@@ -261,6 +329,16 @@ def main():
             print(f"Board Orientation (Euler angles in 'zyx' sequence):")
             print(f"  Roll: {euler_zyx[2]:+.3f}°, Pitch: {euler_zyx[1]:+.3f}°, Yaw: {euler_zyx[0]:+.3f}°")
             
+            # Calculate Reprojection Error (Ideal Pinhole vs. Actual)
+            projected_points, _ = cv2.projectPoints(obj_points, rvec, tvec, K, dist_coeffs)
+            reproj_errors = np.linalg.norm(img_points - projected_points.squeeze(), axis=1)
+            reproj_mean = float(np.mean(reproj_errors))
+            reproj_max = float(np.max(reproj_errors))
+            
+            print(f"\nReprojection Error (Ideal Pinhole vs Actual Detected):")
+            print(f"  Mean Reprojection Error: {reproj_mean:.3f} pixels")
+            print(f"  Max Reprojection Error:  {reproj_max:.3f} pixels")
+
             # 6. Draw 3D axes on the board center
             cv2.drawFrameAxes(annotated_img, K, dist_coeffs, rvec, tvec, length=args.square_length * 2.0, thickness=3)
         else:
@@ -291,14 +369,14 @@ def main():
             font_scale=args.corner_font_size, 
             text_thickness=args.corner_text_thickness
         )
-        
+
     # C. Overlay Text Information (Roll, Pitch, Yaw, Pixel-to-mm scale)
     y_offset = 40
     line_height = 35
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.9
+    font_scale = FONT_SCALE
     color = (0, 255, 255) # Yellow
-    thickness = 2
+    thickness = LINE_WIDTH
     
     cv2.putText(annotated_img, "Charuco Board Analysis", (30, y_offset), font, 1.1, (0, 255, 0), 3)
     y_offset += 45
@@ -323,6 +401,13 @@ def main():
         cv2.putText(annotated_img, f"Pitch (X-rot): {euler_xyz[0]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
         y_offset += line_height
         cv2.putText(annotated_img, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+    if collin_max is not None:
+        cv2.putText(annotated_img, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+    if reproj_mean is not None:
+        cv2.putText(annotated_img, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
         
     # 8. Save/Export the annotated image
     input_dir, input_name = os.path.split(image_path)
