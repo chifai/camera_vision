@@ -180,7 +180,7 @@ def main():
     if intersect:
         # Draw max error circle (transparent light red)
         error_overlay = overlay.copy()
-        cv2.circle(error_overlay, intersect, 50, (150, 150, 255), -1)
+        cv2.circle(error_overlay, intersect, 100, (150, 150, 255), -1)
         cv2.addWeighted(error_overlay, 0.4, overlay, 0.6, 0, overlay)
 
         # Draw actual intersection point
@@ -197,7 +197,7 @@ def main():
 
     # === Draw 5mm Scale (Bottom Left) ===
     # 100 px = 1mm, 10 px = 0.1mm
-    scale_x, scale_y = 50, h - 50
+    scale_x, scale_y = 50, h - 70
     scale_len = 500 # 5mm
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.line(overlay, (scale_x, scale_y), (scale_x + scale_len, scale_y), (255, 255, 255), 4)
@@ -212,6 +212,8 @@ def main():
             cv2.line(overlay, (scale_x + i, scale_y), (scale_x + i, scale_y - 20), (255, 255, 255), 2)
 
     cv2.putText(overlay, "mm", (scale_x + scale_len + 20, scale_y), font, 1.2, (255, 255, 255), 3)
+    
+    cv2.putText(overlay, "Note: Intercept point is marked with Radius=1mm as max tolerance", (50, h - 20), font, 1.2, (255, 255, 255), 3)
 
     edges_dir = "processed/edges_sobel"
     os.makedirs(edges_dir, exist_ok=True)
