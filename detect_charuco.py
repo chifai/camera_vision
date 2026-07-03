@@ -22,14 +22,68 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as R_scipy
 
+def draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
+    """Draws detected ArUco markers with custom line width and larger, highly visible font."""
+    if ids is None or corners is None:
+        return
+    for i, marker_id in enumerate(ids):
+        pts = corners[i][0].astype(np.int32)
+        # Draw the 4 border lines of the marker
+        for j in range(4):
+            cv2.line(image, tuple(pts[j]), tuple(pts[(j + 1) % 4]), (0, 255, 0), line_thickness)
+        
+        # Draw a small red circle on the first corner (top-left by convention)
+        cv2.circle(image, tuple(pts[0]), line_thickness + 2, (0, 0, 255), -1)
+        
+        # Write marker ID text with a black outline for high contrast/legibility
+        text = f"id={marker_id[0]}"
+        # Offset the text slightly from the top-left corner
+        text_org = (int(pts[0][0]) - 15, int(pts[0][1]) - 15)
+        # Black outline
+        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
+        # Green text
+        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), text_thickness, cv2.LINE_AA)
+
+def draw_detected_corners_charuco_custom(image, corners, ids, corner_radius=10, line_thickness=3, font_scale=1.2, text_thickness=2):
+    """Draws detected Charuco chessboard corners with custom sizes and custom text labels."""
+    if ids is None or corners is None:
+        return
+    for i, corner_id in enumerate(ids):
+        pt = tuple(corners[i][0].astype(np.int32))
+        cid_val = corner_id[0]
+        
+        # Draw a custom target crosshair
+        # Red outer ring
+        cv2.circle(image, pt, corner_radius, (0, 0, 255), line_thickness, cv2.LINE_AA)
+        # Inner dot
+        cv2.circle(image, pt, 2, (0, 0, 255), -1, cv2.LINE_AA)
+        # Crosshair lines
+        cv2.line(image, (pt[0] - corner_radius - 4, pt[1]), (pt[0] + corner_radius + 4, pt[1]), (0, 0, 255), line_thickness)
+        cv2.line(image, (pt[0], pt[1] - corner_radius - 4), (pt[0], pt[1] + corner_radius + 4), (0, 0, 255), line_thickness)
+        
+        # Write corner ID text with a black outline for contrast
+        text = str(cid_val)
+        text_org = (pt[0] + corner_radius + 6, pt[1] - corner_radius - 2)
+        # Black outline
+        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
+        # Yellow text (contrasts nicely against markers and the red crosshair)
+        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), text_thickness, cv2.LINE_AA)
+
 def main():
     parser = argparse.ArgumentParser(description="Detect Charuco board and estimate pose/pixel-to-mm conversion.")
     parser.add_argument("image_path", type=str, help="Path to the input image (e.g. raw/cameraaligner_data/rightcamera_chauro.png)")
     parser.add_argument("--squares_x", type=int, default=5, help="Number of squares along X-axis (default: 5)")
     parser.add_argument("--squares_y", type=int, default=5, help="Number of squares along Y-axis (default: 5)")
-    parser.add_argument("--square_length", type=float, default=3.0, help="Chessboard square side length in mm (default: 3.0)")
-    parser.add_argument("--marker_length", type=float, default=2.0, help="ArUco marker side length in mm (default: 2.0)")
+    parser.add_argument("--square_length", type=float, default=4.0, help="Chessboard square side length in mm (default: 4.0)")
+    parser.add_argument("--marker_length", type=float, default=3.0, help="ArUco marker side length in mm (default: 3.0)")
     parser.add_argument("--focal_length", type=float, default=None, help="Assumed focal length in pixels. Defaults to max(width, height)")
+    parser.add_argument("--marker_line_width", type=int, default=5, help="Line width for drawing ArUco markers (default: 5)")
+    parser.add_argument("--marker_font_size", type=float, default=1.5, help="Font size (scale) for marker IDs (default: 1.5)")
+    parser.add_argument("--marker_text_thickness", type=int, default=3, help="Text thickness for marker IDs (default: 3)")
+    parser.add_argument("--corner_radius", type=int, default=10, help="Radius for drawing Charuco corners (default: 10)")
+    parser.add_argument("--corner_line_width", type=int, default=3, help="Line width for drawing Charuco corners (default: 3)")
+    parser.add_argument("--corner_font_size", type=float, default=1.2, help="Font size (scale) for Charuco corner IDs (default: 1.2)")
+    parser.add_argument("--corner_text_thickness", type=int, default=2, help="Text thickness for Charuco corner IDs (default: 2)")
     args = parser.parse_args()
 
     # 1. Load the Image
@@ -217,11 +271,26 @@ def main():
     # 7. Draw 2D Overlays on the Image
     # A. Draw detected ArUco markers
     if marker_ids is not None:
-        cv2.aruco.drawDetectedMarkers(annotated_img, marker_corners, marker_ids)
+        draw_detected_markers_custom(
+            annotated_img, 
+            marker_corners, 
+            marker_ids, 
+            line_thickness=args.marker_line_width, 
+            font_scale=args.marker_font_size, 
+            text_thickness=args.marker_text_thickness
+        )
         
     # B. Draw detected Charuco corners
     if charuco_corners is not None:
-        cv2.aruco.drawDetectedCornersCharuco(annotated_img, charuco_corners, charuco_ids, (0, 0, 255))
+        draw_detected_corners_charuco_custom(
+            annotated_img, 
+            charuco_corners, 
+            charuco_ids, 
+            corner_radius=args.corner_radius, 
+            line_thickness=args.corner_line_width, 
+            font_scale=args.corner_font_size, 
+            text_thickness=args.corner_text_thickness
+        )
         
     # C. Overlay Text Information (Roll, Pitch, Yaw, Pixel-to-mm scale)
     y_offset = 40
