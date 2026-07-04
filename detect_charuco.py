@@ -127,7 +127,15 @@ def overlay_text_info(
 
 class CameraCalibration:
     """Combines board detection, pose/distortion solving, and image undistortion."""
-    def __init__(self, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250):
+    def __init__(self, image_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250):
+        self.image_path = image_path
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Error: Image file '{image_path}' does not exist.")
+        self.img = cv2.imread(image_path)
+        if self.img is None:
+            raise ValueError(f"Error: Could not read image at '{image_path}'")
+        self.h, self.w = self.img.shape[:2]
+
         self.squares_x = squares_x
         self.squares_y = squares_y
         self.square_length = square_length
@@ -169,7 +177,7 @@ class CameraCalibration:
         self.px_per_mm_v = None
         self.mm_per_px_pose = None
 
-    def calculate_collinearity_distortion(self):
+    def __calculate_collinearity_distortion(self):
         """Fits straight lines to rows/columns and calculates the deviation in pixels."""
         if self.charuco_corners is None or len(self.charuco_corners) < 3:
             return None, None
@@ -218,12 +226,12 @@ class CameraCalibration:
         self.collin_rms = float(np.sqrt(np.mean(np.square(all_deviations))))
         return self.collin_max, self.collin_rms
 
-    def detect_charuco(self, image, focal_length=None):
-        """Performs board detection, pose estimation, scale calculation, and distortion solving."""
-        h, w = image.shape[:2]
+    def detect_charuco(self, focal_length=None):
+        """Performs board detection, pose estimation, scale calculation, and distortion solving using class image self.img."""
+        h, w = self.h, self.w
         
         # A. Detect Board
-        self.charuco_corners, self.charuco_ids, self.marker_corners, self.marker_ids = self.detector.detectBoard(image)
+        self.charuco_corners, self.charuco_ids, self.marker_corners, self.marker_ids = self.detector.detectBoard(self.img)
         
         num_markers = len(self.marker_ids) if self.marker_ids is not None else 0
         num_corners = len(self.charuco_corners) if self.charuco_corners is not None else 0
@@ -263,7 +271,7 @@ class CameraCalibration:
                 self.px_per_mm_v = avg_v_px / self.square_length
 
         # C. Calculate Collinearity line straightness deviation
-        self.calculate_collinearity_distortion()
+        self.__calculate_collinearity_distortion()
 
         # D. Pose & Distortion Solving (needs at least 4 coplanar points)
         if num_corners >= 4:
@@ -338,13 +346,14 @@ class CameraCalibration:
 
         return True
 
-    def undistort(self, image, rectify=False, rvec=None, dist_coeffs=None):
+    def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None):
         """
-        Undistorts the image.
+        Undistorts the image. If image is None, uses self.img.
         If dist_coeffs is None, no distortion correction is applied.
         If rvec is None or rectify=False, no perspective rectification is applied.
         """
-        h, w = image.shape[:2]
+        img_to_process = image if image is not None else self.img
+        h, w = img_to_process.shape[:2]
         
         # Resolve camera matrix K (fallback to default pinhole properties if not solved)
         K = self.K
@@ -367,7 +376,7 @@ class CameraCalibration:
             R_rect, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
                 
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
-        return cv2.remap(image, map1, map2, cv2.INTER_LINEAR)
+        return cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR)
 
 def main():
     parser = argparse.ArgumentParser(description="Object-oriented Charuco Board Detection and Image Undistortion pipeline.")
@@ -391,27 +400,23 @@ def main():
 
     # Load Image
     image_path = args.image_path
-    if not os.path.exists(image_path):
-        print(f"Error: Image '{image_path}' does not exist.")
-        sys.exit(1)
-        
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"Error: Could not read image at '{image_path}'")
-        sys.exit(1)
-        
-    h, w = img.shape[:2]
-    print(f"\nLoaded raw image: '{image_path}' ({w} x {h} pixels)")
 
     # 1. Initialize and Run Camera Calibration Pipeline
-    calib = CameraCalibration(
-        squares_x=args.squares_x,
-        squares_y=args.squares_y,
-        square_length=args.square_length,
-        marker_length=args.marker_length
-    )
+    try:
+        calib = CameraCalibration(
+            image_path=image_path,
+            squares_x=args.squares_x,
+            squares_y=args.squares_y,
+            square_length=args.square_length,
+            marker_length=args.marker_length
+        )
+    except Exception as e:
+        print(e)
+        sys.exit(1)
+        
+    print(f"\nLoaded raw image: '{calib.image_path}' ({calib.w} x {calib.h} pixels)")
     
-    success = calib.detect_charuco(img, focal_length=args.focal_length)
+    success = calib.detect_charuco(focal_length=args.focal_length)
     if not success:
         print("Pipeline aborted due to detection or solving failure.")
         sys.exit(1)
@@ -448,7 +453,7 @@ def main():
         print(f"  Orientation ('xyz' Euler): Pitch={calib.euler_xyz[0]:+.3f}°, Yaw={calib.euler_xyz[1]:+.3f}°, Roll={calib.euler_xyz[2]:+.3f}°")
 
     # 2. Draw 2D Overlays & 3D Axes for Detection output
-    annotated_img = img.copy()
+    annotated_img = calib.img.copy()
     if calib.marker_ids is not None:
         draw_detected_markers_custom(
             annotated_img, 
@@ -473,7 +478,7 @@ def main():
 
     # Apply Text Overlay to detected image
     overlay_text_info(
-        annotated_img, w, h, len(calib.marker_ids), len(calib.charuco_corners),
+        annotated_img, calib.w, calib.h, len(calib.marker_ids), len(calib.charuco_corners),
         mm_per_px_h=calib.mm_per_px_h, mm_per_px_v=calib.mm_per_px_v,
         px_per_mm_h=calib.px_per_mm_h, px_per_mm_v=calib.px_per_mm_v,
         pose_depth=calib.pose_depth, euler_xyz=calib.euler_xyz,
@@ -483,8 +488,8 @@ def main():
     )
 
     # 3. Apply Undistortion and Rectification using Class Methods
-    undist_only_img = calib.undistort(img, rectify=False, dist_coeffs=calib.dist_coeffs)
-    undist_rectified_img = calib.undistort(img, rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs)
+    undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs)
+    undist_rectified_img = calib.undistort(rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs)
 
     # 4. Save All Outputs
     input_dir, input_name = os.path.split(image_path)
