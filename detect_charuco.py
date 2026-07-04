@@ -22,9 +22,9 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as R_scipy
 
-FONT_SCALE = 0.2
-LINE_WIDTH = 1
-TEXT_WIDTH = 1
+FONT_SCALE = 1
+LINE_WIDTH = 3
+TEXT_WIDTH = 3
 
 def draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
     """Draws detected ArUco markers with custom line width and larger, highly visible font."""
@@ -124,6 +124,57 @@ def calculate_collinearity_distortion(corners, ids, squares_x):
     max_dev = float(np.max(all_deviations))
     rms_dev = float(np.sqrt(np.mean(np.square(all_deviations))))
     return max_dev, rms_dev
+
+def overlay_text_info(
+    image, w, h, num_markers, num_corners,
+    mm_per_px_h=None, mm_per_px_v=None, px_per_mm_h=None, px_per_mm_v=None,
+    pose_depth=None, euler_xyz=None, collin_max=None, reproj_mean=None,
+    solved_dist_coeffs=None,
+    font_scale=0.9, thickness=2, color=(0, 255, 255)
+):
+    """Overlays calculated parameters (orientation, scale, distortion) as text on the image."""
+    y_offset = 40
+    line_height = 35
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, (0, 255, 0), 3)
+    y_offset += 45
+    
+    cv2.putText(image, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
+    y_offset += line_height
+    
+    cv2.putText(image, f"Markers: {num_markers} | Corners: {num_corners}", (30, y_offset), font, font_scale, color, thickness)
+    y_offset += line_height
+    
+    if mm_per_px_h is not None and mm_per_px_v is not None:
+        cv2.putText(image, f"Scale (X): {mm_per_px_h:.5f} mm/px ({px_per_mm_h:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"Scale (Y): {mm_per_px_v:.5f} mm/px ({px_per_mm_v:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+    if euler_xyz is not None:
+        cv2.putText(image, f"Pose Z (depth): {pose_depth:.1f} mm", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"Roll (Z-rot):  {euler_xyz[2]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"Pitch (X-rot): {euler_xyz[0]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+    if collin_max is not None:
+        cv2.putText(image, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+    if reproj_mean is not None:
+        cv2.putText(image, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+    if solved_dist_coeffs is not None:
+        cv2.putText(image, f"k1 (radial 1): {solved_dist_coeffs[0]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"k2 (radial 2): {solved_dist_coeffs[1]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"p1 (tang 1):   {solved_dist_coeffs[2]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
 
 def main():
     parser = argparse.ArgumentParser(description="Detect Charuco board and estimate pose/pixel-to-mm conversion.")
@@ -266,6 +317,7 @@ def main():
     euler_xyz = None
     reproj_mean = None
     reproj_max = None
+    solved_dist_coeffs = None
     
     if charuco_corners is not None and len(charuco_corners) >= 4:
         # Form 3D-2D point correspondences
@@ -339,6 +391,35 @@ def main():
             print(f"  Mean Reprojection Error: {reproj_mean:.3f} pixels")
             print(f"  Max Reprojection Error:  {reproj_max:.3f} pixels")
 
+            # Solve for lens distortion coefficients (k1, k2, p1, p2, k3)
+            # Since we only have a single frame, full calibration is underdetermined.
+            # We fix focal length and principal point to solve only for distortion & pose.
+            try:
+                flags_calib = cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_FOCAL_LENGTH
+                calib_K = K.copy().astype(np.float64)
+                calib_dist = np.zeros(5, dtype=np.float64)
+                
+                ret_val, _, solved_dist, _, _ = cv2.calibrateCamera(
+                    objectPoints=[obj_points],
+                    imagePoints=[img_points],
+                    imageSize=(w, h),
+                    cameraMatrix=calib_K,
+                    distCoeffs=calib_dist,
+                    flags=flags_calib
+                )
+                
+                solved_dist_coeffs = solved_dist.flatten()
+                print("\n--- Solver-Derived Lens Distortion Coefficients ---")
+                print(f"  k1 (Radial 1):     {solved_dist_coeffs[0]:+.6e}")
+                print(f"  k2 (Radial 2):     {solved_dist_coeffs[1]:+.6e}")
+                print(f"  p1 (Tangential 1): {solved_dist_coeffs[2]:+.6e}")
+                print(f"  p2 (Tangential 2): {solved_dist_coeffs[3]:+.6e}")
+                print(f"  k3 (Radial 3):     {solved_dist_coeffs[4]:+.6e}")
+                print(f"  Calibration RMS Error: {ret_val:.3f} pixels")
+            except Exception as e:
+                print(f"\nCould not solve for distortion coefficients: {e}")
+                solved_dist_coeffs = None
+
             # 6. Draw 3D axes on the board center
             cv2.drawFrameAxes(annotated_img, K, dist_coeffs, rvec, tvec, length=args.square_length * 2.0, thickness=3)
         else:
@@ -370,44 +451,16 @@ def main():
             text_thickness=args.corner_text_thickness
         )
 
-    # C. Overlay Text Information (Roll, Pitch, Yaw, Pixel-to-mm scale)
-    y_offset = 40
-    line_height = 35
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = FONT_SCALE
-    color = (0, 255, 255) # Yellow
-    thickness = LINE_WIDTH
-    
-    cv2.putText(annotated_img, "Charuco Board Analysis", (30, y_offset), font, 1.1, (0, 255, 0), 3)
-    y_offset += 45
-    
-    cv2.putText(annotated_img, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
-    y_offset += line_height
-    
-    cv2.putText(annotated_img, f"Markers: {num_markers} | Corners: {num_corners}", (30, y_offset), font, font_scale, color, thickness)
-    y_offset += line_height
-    
-    if mm_per_px_h is not None and mm_per_px_v is not None:
-        cv2.putText(annotated_img, f"Scale (X): {mm_per_px_h:.5f} mm/px ({px_per_mm_h:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(annotated_img, f"Scale (Y): {mm_per_px_v:.5f} mm/px ({px_per_mm_v:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        
-    if euler_xyz is not None:
-        cv2.putText(annotated_img, f"Pose Z (depth): {pose_depth:.1f} mm", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(annotated_img, f"Roll (Z-rot):  {euler_xyz[2]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(annotated_img, f"Pitch (X-rot): {euler_xyz[0]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(annotated_img, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        
-    if collin_max is not None:
-        cv2.putText(annotated_img, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-    if reproj_mean is not None:
-        cv2.putText(annotated_img, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+    # C. Overlay Text Information (Roll, Pitch, Yaw, Pixel-to-mm scale, distortion)
+    overlay_text_info(
+        annotated_img, w, h, num_markers, num_corners,
+        mm_per_px_h=mm_per_px_h, mm_per_px_v=mm_per_px_v,
+        px_per_mm_h=px_per_mm_h, px_per_mm_v=px_per_mm_v,
+        pose_depth=pose_depth, euler_xyz=euler_xyz,
+        collin_max=collin_max, reproj_mean=reproj_mean,
+        solved_dist_coeffs=solved_dist_coeffs,
+        font_scale=0.9, thickness=2
+    )
         
     # 8. Save/Export the annotated image
     input_dir, input_name = os.path.split(image_path)
