@@ -27,6 +27,8 @@ LINE_WIDTH_DEFAULT = 2
 COLOR_YELLOW = (0, 255, 255)
 COLOR_GREEN = (0, 255, 0)
 COLOR_RED = (0, 0, 255)
+COLOR_TEXT = (0, 0, 0)
+COLOR_TITLE = (0, 0, 0)
 
 def draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
     """Draws detected ArUco markers with custom line width and larger, highly visible font."""
@@ -79,14 +81,14 @@ def overlay_text_info(
     mm_per_px_h=None, mm_per_px_v=None, px_per_mm_h=None, px_per_mm_v=None,
     pose_depth=None, euler_xyz=None, collin_max=None, reproj_mean=None,
     solved_dist_coeffs=None,
-    font_scale=0.9, thickness=2, color=COLOR_YELLOW
+    font_scale=0.9, thickness=2, color=COLOR_TEXT
 ):
     """Overlays calculated parameters (orientation, scale, distortion) as text on the image."""
     y_offset = 40
     line_height = 35
     font = cv2.FONT_HERSHEY_SIMPLEX
     
-    cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, COLOR_GREEN, 3)
+    cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, COLOR_TITLE, 3)
     y_offset += 45
     
     cv2.putText(image, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
@@ -124,6 +126,11 @@ def overlay_text_info(
         cv2.putText(image, f"k2 (radial 2): {solved_dist_coeffs[1]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
         y_offset += line_height
         cv2.putText(image, f"p1 (tang 1):   {solved_dist_coeffs[2]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"p1 (tang 2):   {solved_dist_coeffs[3]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        cv2.putText(image, f"k3 (radial 3):   {solved_dist_coeffs[4]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+        
 
 class CameraCalibration:
     """Combines board detection, pose/distortion solving, and image undistortion."""
@@ -320,7 +327,7 @@ class CameraCalibration:
                 
                 # Solve single-frame lens distortion coefficients by fixing intrinsics (K)
                 try:
-                    flags_calib = cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_FOCAL_LENGTH
+                    flags_calib = cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_FOCAL_LENGTH | cv2.CALIB_FIX_K3 
                     calib_K = self.K.copy()
                     calib_dist = np.zeros(5, dtype=np.float64)
                     
