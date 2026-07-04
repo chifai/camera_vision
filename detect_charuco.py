@@ -338,21 +338,35 @@ class CameraCalibration:
 
         return True
 
-    def undistort(self, image, rectify=False):
-        """Undistorts the image using solved distortion. If rectify=True, also removes rotation."""
-        if self.K is None or self.dist_coeffs is None:
-            print("Error: Calibration has not been completed. Cannot undistort.")
-            return image
-            
+    def undistort(self, image, rectify=False, rvec=None, dist_coeffs=None):
+        """
+        Undistorts the image.
+        If dist_coeffs is None, no distortion correction is applied.
+        If rvec is None or rectify=False, no perspective rectification is applied.
+        """
         h, w = image.shape[:2]
         
-        if rectify and self.rvec is not None:
-            # R rectifies board tilt
-            R, _ = cv2.Rodrigues(self.rvec)
-            map1, map2 = cv2.initUndistortRectifyMap(self.K, self.dist_coeffs, R, self.K, (w, h), cv2.CV_32FC1)
-        else:
-            map1, map2 = cv2.initUndistortRectifyMap(self.K, self.dist_coeffs, None, self.K, (w, h), cv2.CV_32FC1)
+        # Resolve camera matrix K (fallback to default pinhole properties if not solved)
+        K = self.K
+        if K is None:
+            f = float(max(w, h))
+            cx = w / 2.0
+            cy = h / 2.0
+            K = np.array([
+                [f, 0, cx],
+                [0, f, cy],
+                [0, 0, 1]
+            ], dtype=np.float64)
             
+        # If dist_coeffs is None, apply zero distortion (no correction)
+        D = dist_coeffs if dist_coeffs is not None else np.zeros(5, dtype=np.float64)
+            
+        # Determine rotation for rectification (if rectify is True and rvec is provided)
+        R_rect = None
+        if rectify and rvec is not None:
+            R_rect, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
+                
+        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
         return cv2.remap(image, map1, map2, cv2.INTER_LINEAR)
 
 def main():
@@ -469,8 +483,8 @@ def main():
     )
 
     # 3. Apply Undistortion and Rectification using Class Methods
-    undist_only_img = calib.undistort(img, rectify=False)
-    undist_rectified_img = calib.undistort(img, rectify=True)
+    undist_only_img = calib.undistort(img, rectify=False, dist_coeffs=calib.dist_coeffs)
+    undist_rectified_img = calib.undistort(img, rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs)
 
     # 4. Save All Outputs
     input_dir, input_name = os.path.split(image_path)
