@@ -419,7 +419,8 @@ class CameraCalibration:
         # Determine rotation for rectification (if rectify is True and rvec is provided)
         R_rect = None
         if rectify and rvec is not None:
-            R_rect, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
+            R_mat, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
+            R_rect = R_mat.T
                 
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
         processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR)

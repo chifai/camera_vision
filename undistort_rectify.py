@@ -93,13 +93,15 @@ def main():
     if args.rectify:
         # Convert rotation vector to 3x3 rotation matrix R
         rvec = np.array(args.rvec, dtype=np.float64)
-        R, _ = cv2.Rodrigues(rvec)
+        R_mat, _ = cv2.Rodrigues(rvec)
+        # Use transpose (inverse) for rectification
+        R_rect = R_mat.T
         print("\nApplying Perspective Rectification (Rotation correction):")
         print(f"Rotation vector (rvec): {rvec}")
-        print("Rotation Matrix (R):")
-        print(R)
+        print("Rectification Rotation Matrix (R.T):")
+        print(R_rect)
         
-        map1, map2 = cv2.initUndistortRectifyMap(K, D, R, K, (w, h), cv2.CV_32FC1)
+        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
         mode_str = "undistorted_rectified"
     else:
         print("\nApplying standard lens undistortion (no rotation correction):")
