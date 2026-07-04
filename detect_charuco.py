@@ -423,8 +423,8 @@ class CameraCalibration:
             R_rect = R_mat.T
                 
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
-        processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR)
-        
+        processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+
         if return_comparison:
             # Generate annotated image
             annotated_img = self.get_annotated_image()

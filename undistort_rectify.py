@@ -109,7 +109,7 @@ def main():
         mode_str = "undistorted"
 
     # 4. Warp the Image
-    output_img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
+    output_img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
 
     # 5. Save Main Output
     if args.output_path is None:
