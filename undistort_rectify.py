@@ -4,7 +4,8 @@ Charuco Undistort & Rectification Script
 
 This script takes a raw image, applies camera matrix K, lens distortion parameters 
 (k1, k2, p1, p2, k3) and rotation vector (rvec) obtained from detect_charuco.py 
-to generate an undistorted and/or perspective-rectified output image.
+to generate an undistorted and/or perspective-rectified output image, as well as
+a side-by-side comparison image.
 
 Usage:
     python3 undistort_rectify.py <path_to_image> [options]
@@ -13,7 +14,7 @@ Example:
     python3 undistort_rectify.py raw/cameraaligner_data/rightcamera_chauro.png --rectify
 
 Author: Antigravity Code Assistant
-Date: July 2, 2026
+Date: July 3, 2026
 """
 
 import os
@@ -22,27 +23,36 @@ import argparse
 import cv2
 import numpy as np
 
+# Try importing CameraCalibration for drawing annotations in comparison mode
+try:
+    from detect_charuco import CameraCalibration
+    HAS_CALIB_CLASS = True
+except ImportError:
+    HAS_CALIB_CLASS = False
+
 def main():
     parser = argparse.ArgumentParser(description="Apply lens undistortion and rotation rectification to an image.")
     parser.add_argument("image_path", type=str, help="Path to the input raw image.")
     parser.add_argument("--output_path", type=str, default=None, help="Path to save the output image (default: <input_name>_undistorted.png)")
     
     # Distortion parameters (defaults set to the values solved from detect_charuco.py)
-    parser.add_argument("--k1", type=float, default=0.0, help="Radial distortion coefficient k1 (default: -6.040867)")
-    parser.add_argument("--k2", type=float, default=0.0, help="Radial distortion coefficient k2 (default: 72.86274)")
-    parser.add_argument("--p1", type=float, default=0.0, help="Tangential distortion coefficient p1 (default: -0.0005297)")
-    parser.add_argument("--p2", type=float, default=0.0, help="Tangential distortion coefficient p2 (default: 0.035767)")
-    parser.add_argument("--k3", type=float, default=0.0, help="Radial distortion coefficient k3 (default: -250.6142)")
+    parser.add_argument("--k1", type=float, default=0.0, help="Radial distortion coefficient k1 (default: 0.0)")
+    parser.add_argument("--k2", type=float, default=0.0, help="Radial distortion coefficient k2 (default: 0.0)")
+    parser.add_argument("--p1", type=float, default=0.0, help="Tangential distortion coefficient p1 (default: 0.0)")
+    parser.add_argument("--p2", type=float, default=0.0, help="Tangential distortion coefficient p2 (default: 0.0)")
+    parser.add_argument("--k3", type=float, default=0.0, help="Radial distortion coefficient k3 (default: 0.0)")
     
     # Rotational parameters (default set to rotation solved from detect_charuco.py)
     parser.add_argument("--rvec", type=float, nargs=3, default=[0.0, 0.0, 0.0],
-                        help="Rotation vector (rvec) from pose estimation (default: 0.03908682 -0.13819391 0.04552815)")
+                        help="Rotation vector (rvec) from pose estimation (default: 0.0, 0.0, 0.0)")
     
-    # Rectification control
+    # Rectification and Comparison controls
     parser.add_argument("--rectify", action="store_true", 
                         help="Enable perspective rectification (removes roll/pitch/yaw tilt of the board, flattening it).")
     parser.add_argument("--focal_length", type=float, default=None, 
                         help="Assumed camera focal length in pixels. Defaults to max(width, height)")
+    parser.add_argument("--no_comparison", action="store_true",
+                        help="Disable generating the side-by-side comparison image.")
 
     args = parser.parse_args()
 
@@ -89,8 +99,6 @@ def main():
         print("Rotation Matrix (R):")
         print(R)
         
-        # initUndistortRectifyMap will correct for both lens distortion (D) and board rotation (R).
-        # We pass R to align the virtual camera with the plane of the board.
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R, K, (w, h), cv2.CV_32FC1)
         mode_str = "undistorted_rectified"
     else:
@@ -101,21 +109,66 @@ def main():
     # 4. Warp the Image
     output_img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
 
-    # 5. Save Output
+    # 5. Save Main Output
     if args.output_path is None:
         input_dir, input_name = os.path.split(image_path)
         base_name, ext = os.path.splitext(input_name)
         output_name = f"{base_name}_{mode_str}{ext}"
         
-        if os.path.isdir("processed"):
-            output_path = os.path.join("processed", output_name)
-        else:
-            output_path = os.path.join(input_dir, output_name)
+        out_dir = "processed" if os.path.isdir("processed") else input_dir
+        output_path = os.path.join(out_dir, output_name)
     else:
         output_path = args.output_path
+        input_dir, input_name = os.path.split(image_path)
+        base_name, ext = os.path.splitext(input_name)
+        out_dir = os.path.split(output_path)[0]
 
     cv2.imwrite(output_path, output_img)
     print(f"\nSuccessfully generated and saved output to: '{output_path}'")
+
+    # 6. Generate and Save Side-by-Side Comparison Image (if not disabled)
+    if not args.no_comparison:
+        annotated_img = None
+        title_left = "Original Raw View"
+        
+        # Try running Charuco detection to annotate the original view
+        if HAS_CALIB_CLASS:
+            try:
+                calib = CameraCalibration(image_path)
+                success = calib.detect_charuco(focal_length=f)
+                if success:
+                    # Retrieve the annotated view from class
+                    annotated_img = calib.get_annotated_image()
+                    title_left = "Detected & Annotated View"
+            except Exception as e:
+                print(f"Note: Could not run Charuco board detection for comparison annotations: {e}")
+                
+        if annotated_img is None:
+            annotated_img = img.copy()
+
+        # Helper to add centered title text on a black bar on top of the images
+        def add_title(img_src, title_text, bar_height=80, font_scale=1.2, thickness=3):
+            img_h, img_w = img_src.shape[:2]
+            bar = np.zeros((bar_height, img_w, 3), dtype=np.uint8)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            text_size, _ = cv2.getTextSize(title_text, font, font_scale, thickness)
+            text_w, text_h = text_size
+            text_x = (img_w - text_w) // 2
+            text_y = (bar_height + text_h) // 2
+            cv2.putText(bar, title_text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+            return np.vstack((bar, img_src))
+
+        # Add titles and stack horizontally
+        annotated_titled = add_title(annotated_img, title_left)
+        processed_titled = add_title(output_img, "Undistorted & Rectified View" if args.rectify else "Undistorted View")
+        
+        comparison_img = np.hstack((annotated_titled, processed_titled))
+        
+        # Save comparison image
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{ext}")
+        cv2.imwrite(path_comparison, comparison_img)
+        print(f"Successfully generated and saved comparison to: '{path_comparison}'")
+
     print("Done!")
 
 if __name__ == "__main__":

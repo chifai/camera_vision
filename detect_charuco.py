@@ -346,11 +346,50 @@ class CameraCalibration:
 
         return True
 
-    def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None):
+    def get_annotated_image(self, marker_line_width=5, marker_font_size=1.5, marker_text_thickness=3, 
+                            corner_radius=10, corner_line_width=3, corner_font_size=1.2, corner_text_thickness=2):
+        """Generates and returns the annotated image with all overlays and text info."""
+        annotated_img = self.img.copy()
+        if self.marker_ids is not None:
+            draw_detected_markers_custom(
+                annotated_img, 
+                self.marker_corners, 
+                self.marker_ids, 
+                line_thickness=marker_line_width, 
+                font_scale=marker_font_size, 
+                text_thickness=marker_text_thickness
+            )
+        if self.charuco_corners is not None:
+            draw_detected_corners_charuco_custom(
+                annotated_img, 
+                self.charuco_corners, 
+                self.charuco_ids, 
+                corner_radius=corner_radius, 
+                line_thickness=corner_line_width, 
+                font_scale=corner_font_size, 
+                text_thickness=corner_text_thickness
+            )
+        if self.rvec is not None:
+            cv2.drawFrameAxes(annotated_img, self.K.astype(np.float32), np.zeros(5, dtype=np.float32), self.rvec.astype(np.float32), self.tvec.astype(np.float32), length=self.square_length * 2.0, thickness=3)
+
+        # Apply Text Overlay to detected image
+        overlay_text_info(
+            annotated_img, self.w, self.h, len(self.marker_ids) if self.marker_ids is not None else 0, len(self.charuco_corners) if self.charuco_corners is not None else 0,
+            mm_per_px_h=self.mm_per_px_h, mm_per_px_v=self.mm_per_px_v,
+            px_per_mm_h=self.px_per_mm_h, px_per_mm_v=self.px_per_mm_v,
+            pose_depth=self.pose_depth, euler_xyz=self.euler_xyz,
+            collin_max=self.collin_max, reproj_mean=self.reproj_mean,
+            solved_dist_coeffs=self.dist_coeffs,
+            font_scale=0.9, thickness=2
+        )
+        return annotated_img
+
+    def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None, return_comparison=False):
         """
         Undistorts the image. If image is None, uses self.img.
         If dist_coeffs is None, no distortion correction is applied.
         If rvec is None or rectify=False, no perspective rectification is applied.
+        If return_comparison is True, returns a tuple (processed_img, side_by_side_comparison_img).
         """
         img_to_process = image if image is not None else self.img
         h, w = img_to_process.shape[:2]
@@ -376,7 +415,33 @@ class CameraCalibration:
             R_rect, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
                 
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
-        return cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR)
+        processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR)
+        
+        if return_comparison:
+            # Generate annotated image
+            annotated_img = self.get_annotated_image()
+            
+            # Helper to add a centered title on top of each image
+            def add_title(img_src, title_text, bar_height=80, font_scale=1.2, thickness=3):
+                img_h, img_w = img_src.shape[:2]
+                bar = np.zeros((bar_height, img_w, 3), dtype=np.uint8)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                text_size, _ = cv2.getTextSize(title_text, font, font_scale, thickness)
+                text_w, text_h = text_size
+                text_x = (img_w - text_w) // 2
+                text_y = (bar_height + text_h) // 2
+                cv2.putText(bar, title_text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                return np.vstack((bar, img_src))
+                
+            # Add titles
+            annotated_titled = add_title(annotated_img, "Detected & Annotated View")
+            processed_titled = add_title(processed_img, "Undistorted & Rectified View" if rectify else "Undistorted View")
+            
+            # Stack side-by-side
+            comparison_img = np.hstack((annotated_titled, processed_titled))
+            return processed_img, comparison_img
+            
+        return processed_img
 
 def main():
     parser = argparse.ArgumentParser(description="Object-oriented Charuco Board Detection and Image Undistortion pipeline.")
@@ -452,44 +517,25 @@ def main():
         print(f"  Board Pose Z (depth): {calib.pose_depth:.3f} mm")
         print(f"  Orientation ('xyz' Euler): Pitch={calib.euler_xyz[0]:+.3f}°, Yaw={calib.euler_xyz[1]:+.3f}°, Roll={calib.euler_xyz[2]:+.3f}°")
 
-    # 2. Draw 2D Overlays & 3D Axes for Detection output
-    annotated_img = calib.img.copy()
-    if calib.marker_ids is not None:
-        draw_detected_markers_custom(
-            annotated_img, 
-            calib.marker_corners, 
-            calib.marker_ids, 
-            line_thickness=args.marker_line_width, 
-            font_scale=args.marker_font_size, 
-            text_thickness=args.marker_text_thickness
-        )
-    if calib.charuco_corners is not None:
-        draw_detected_corners_charuco_custom(
-            annotated_img, 
-            calib.charuco_corners, 
-            calib.charuco_ids, 
-            corner_radius=args.corner_radius, 
-            line_thickness=args.corner_line_width, 
-            font_scale=args.corner_font_size, 
-            text_thickness=args.corner_text_thickness
-        )
-    if calib.rvec is not None:
-        cv2.drawFrameAxes(annotated_img, calib.K.astype(np.float32), np.zeros(5, dtype=np.float32), calib.rvec.astype(np.float32), calib.tvec.astype(np.float32), length=args.square_length * 2.0, thickness=3)
-
-    # Apply Text Overlay to detected image
-    overlay_text_info(
-        annotated_img, calib.w, calib.h, len(calib.marker_ids), len(calib.charuco_corners),
-        mm_per_px_h=calib.mm_per_px_h, mm_per_px_v=calib.mm_per_px_v,
-        px_per_mm_h=calib.px_per_mm_h, px_per_mm_v=calib.px_per_mm_v,
-        pose_depth=calib.pose_depth, euler_xyz=calib.euler_xyz,
-        collin_max=calib.collin_max, reproj_mean=calib.reproj_mean,
-        solved_dist_coeffs=calib.dist_coeffs,
-        font_scale=0.9, thickness=2
+    # 2. Generate Annotated Image (used for saving and text overlays)
+    annotated_img = calib.get_annotated_image(
+        marker_line_width=args.marker_line_width,
+        marker_font_size=args.marker_font_size,
+        marker_text_thickness=args.marker_text_thickness,
+        corner_radius=args.corner_radius,
+        corner_line_width=args.corner_line_width,
+        corner_font_size=args.corner_font_size,
+        corner_text_thickness=args.corner_text_thickness
     )
 
-    # 3. Apply Undistortion and Rectification using Class Methods
+    # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
     undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs)
-    undist_rectified_img = calib.undistort(rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs)
+    undist_rectified_img, comparison_img = calib.undistort(
+        rectify=True, 
+        rvec=calib.rvec, 
+        dist_coeffs=None, 
+        return_comparison=True
+    )
 
     # 4. Save All Outputs
     input_dir, input_name = os.path.split(image_path)
@@ -500,14 +546,17 @@ def main():
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
     path_undist = os.path.join(out_dir, f"{base_name}_undistorted{ext}")
     path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{ext}")
+    path_comparison = os.path.join(out_dir, f"{base_name}_comparison{ext}")
     
     cv2.imwrite(path_detected, annotated_img)
     cv2.imwrite(path_undist, undist_only_img)
     cv2.imwrite(path_rectified, undist_rectified_img)
+    cv2.imwrite(path_comparison, comparison_img)
     
     print(f"\nSaved annotated image: '{path_detected}'")
     print(f"Saved undistorted image: '{path_undist}'")
     print(f"Saved rectified image:   '{path_rectified}'")
+    print(f"Saved comparison image:  '{path_comparison}'")
     print("Combined Pipeline executed successfully!")
 
 if __name__ == "__main__":
