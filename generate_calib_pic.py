@@ -37,7 +37,7 @@ class charuco2svg(object):
     def generateSVG(self):
         oddRows=self.SQUARE_Y%2
         markerPositions = [[oddRows==(i+j)%2 for i in range(self.SQUARE_X)]for j in range(self.SQUARE_Y)]
-        markers = au.getMarkers(self.charucoBoard.ids.flatten(),self.DICT,au.markerWidth(self.DICT_STRING))
+        markers = au.getMarkers(self.charucoBoard.getIds().flatten(),self.DICT,au.markerWidth(self.DICT_STRING))
 
 
         markerIdx = 0
