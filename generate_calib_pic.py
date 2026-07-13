@@ -61,18 +61,18 @@ if __name__ == "__main__":
     parser.add_argument('squareLength',help="squareLength parameter used for OpenCv charuco board initialization")
     parser.add_argument('markerLength',help="markerLength parameter used for OpenCv charuco board initialization")
     parser.add_argument('dictionary',help="dictionary parameter used for OpenCv charuco board initialization")
-    parser.add_argument("--output_file",nargs="?",default='./charucoBoard.svg',help="output svg file")
-    parser.add_argument("--charuco_board_json",nargs="?",default='./charucoBoard.json',help="output charuco board JSON file")
 
     args = parser.parse_args()
 
+    svg_file_path = f"charucoBoard_{args.squaresX}x{args.squaresY}_{float(args.squareLength)*1000}_{float(args.markerLength)*1000}.svg"
+    json_file_path = f"charucoBoard_{args.squaresX}x{args.squaresY}_{float(args.squareLength)*1000}_{float(args.markerLength)*1000}.json"
     
     params = {'squaresX':args.squaresX,'squaresY':args.squaresY,'squareLength':args.squareLength,'markerLength':args.markerLength,'dictionary':args.dictionary}
 
     
-    with open(args.charuco_board_json, 'w') as outfile:
+    with open(json_file_path, 'w') as outfile:
         json.dump(params, outfile,indent=4)
-    print("Wrote charuco board params to {}".format(args.charuco_board_json))
+    print("Wrote charuco board params to {}".format(json_file_path))
    
-    charuco2svg(int(args.squaresX),int(args.squaresY),float(args.squareLength),float(args.markerLength),args.dictionary,args.output_file).generateSVG()
-    print("Saved charuco board as {}".format(args.output_file))
+    charuco2svg(int(args.squaresX),int(args.squaresY),float(args.squareLength),float(args.markerLength),args.dictionary,svg_file_path).generateSVG()
+    print("Saved charuco board as {}".format(svg_file_path))
