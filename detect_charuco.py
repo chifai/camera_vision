@@ -479,6 +479,118 @@ class CameraCalibration:
             
         return processed_img
 
+    @classmethod
+    def calibrate_from_directory(cls, directory_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250, auto_mirror=True):
+        """
+        Scans a directory for calibration images, detects Charuco corners, and solves for the camera intrinsics and distortion.
+        
+        If auto_mirror is True, it checks both original and horizontally mirrored versions to maximize detections.
+        """
+        if not os.path.isdir(directory_path):
+            raise NotADirectoryError(f"'{directory_path}' is not a valid directory.")
+
+        # Set up dictionary and board for detection
+        dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
+        board = cv2.aruco.CharucoBoard((squares_x, squares_y), square_length, marker_length, dictionary)
+        
+        detector_params = cv2.aruco.DetectorParameters()
+        detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        detector = cv2.aruco.CharucoDetector(board, detectorParams=detector_params)
+        
+        # Grab all image files
+        valid_extensions = {".png", ".jpg", ".jpeg"}
+        image_files = []
+        for f in os.listdir(directory_path):
+            if os.path.splitext(f)[1].lower() in valid_extensions:
+                image_files.append(os.path.join(directory_path, f))
+        
+        image_files = sorted(image_files)
+        print(f"Found {len(image_files)} potential calibration images in '{directory_path}'.")
+        
+        all_corners = []
+        all_ids = []
+        used_image_paths = []
+        image_size = None
+        
+        for filepath in image_files:
+            img = cv2.imread(filepath)
+            if img is None:
+                print(f"  Warning: Could not read image '{os.path.basename(filepath)}'. Skipping.")
+                continue
+                
+            h, w = img.shape[:2]
+            if image_size is None:
+                image_size = (w, h)
+            elif image_size != (w, h):
+                print(f"  Warning: Size mismatch for '{os.path.basename(filepath)}' ({w}x{h} vs expected {image_size[0]}x{image_size[1]}). Skipping.")
+                continue
+                
+            # Perform detection on original image
+            corners, ids, marker_corners, marker_ids = detector.detectBoard(img)
+            n_corners = len(corners) if corners is not None else 0
+            is_flipped = False
+            
+            # Check mirrored if auto_mirror is enabled
+            if auto_mirror:
+                flipped_img = cv2.flip(img, 1)
+                flipped_corners, flipped_ids, _, _ = detector.detectBoard(flipped_img)
+                n_flipped_corners = len(flipped_corners) if flipped_corners is not None else 0
+                
+                if n_flipped_corners > n_corners:
+                    corners = flipped_corners
+                    ids = flipped_ids
+                    n_corners = n_flipped_corners
+                    is_flipped = True
+            
+            if n_corners >= 4:
+                all_corners.append(corners)
+                all_ids.append(ids)
+                used_image_paths.append(filepath)
+                mirror_str = " (Mirrored)" if is_flipped else ""
+                print(f"  Processed '{os.path.basename(filepath)}'{mirror_str}: detected {n_corners} corners.")
+            else:
+                print(f"  Skipping '{os.path.basename(filepath)}': only {n_corners} corners detected (minimum 4 required).")
+                
+        print(f"\nSuccessfully collected corners from {len(all_corners)} images.")
+        
+        if len(all_corners) < 3:
+            print("Error: At least 3 valid calibration views are required to perform calibration.")
+            return False, {}
+            
+        cameraMatrix = np.eye(3, dtype=np.float64)
+        distCoeffs = np.zeros(5, dtype=np.float64)
+        
+        print("\nComputing multi-image camera calibration parameters...")
+        try:
+            retval, K_solved, dist_solved, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
+                charucoCorners=all_corners,
+                charucoIds=all_ids,
+                board=board,
+                imageSize=image_size,
+                cameraMatrix=cameraMatrix,
+                distCoeffs=distCoeffs
+            )
+        except AttributeError as e:
+            if "calibrateCameraCharuco" in str(e):
+                print("\nError: cv2.aruco.calibrateCameraCharuco was not found.")
+                print("This usually means you are running the standard 'opencv-python' package globally instead of 'opencv-contrib-python'.")
+                print("Please run this command using the project's virtual environment instead:")
+                print("  ./run_venv.sh python3 detect_charuco.py ./raw/calibrate")
+                sys.exit(1)
+            else:
+                raise e
+        
+        results = {
+            'K': K_solved,
+            'dist_coeffs': dist_solved,
+            'reproj_error': retval,
+            'rvecs': rvecs,
+            'tvecs': tvecs,
+            'image_paths': used_image_paths,
+            'image_size': image_size
+        }
+        return True, results
+
 def main():
     parser = argparse.ArgumentParser(description="Object-oriented Charuco Board Detection and Image Undistortion pipeline.")
     parser.add_argument("image_path", type=str, help="Path to the input image.")
@@ -502,6 +614,48 @@ def main():
 
     # Load Image
     image_path = args.image_path
+
+    if os.path.isdir(image_path):
+        print(f"\n===========================================================")
+        print(f" Starting Multi-Image Calibration from Directory: '{image_path}'")
+        print(f"===========================================================")
+        success, results = CameraCalibration.calibrate_from_directory(
+            directory_path=image_path,
+            squares_x=args.squares_x,
+            squares_y=args.squares_y,
+            square_length=args.square_length,
+            marker_length=args.marker_length
+        )
+        if success:
+            print("\n===========================================================")
+            print(" MULTI-IMAGE CALIBRATION RESULTS")
+            print("===========================================================")
+            print(f"Successfully Calibrated Views: {len(results['image_paths'])}")
+            print(f"Reprojection Error (RMS):       {results['reproj_error']:.4f} pixels")
+            print("\nSolved Camera Matrix K:")
+            print(results['K'])
+            print("\nSolved Distortion Coefficients D:")
+            print(f"  k1, k2, p1, p2, k3 = {results['dist_coeffs'].flatten().tolist()}")
+            
+            # Save results to a json file in the directory
+            import json
+            out_file = os.path.join(image_path, "calibration_results.json")
+            data = {
+                'reproj_error': float(results['reproj_error']),
+                'K': results['K'].tolist(),
+                'dist_coeffs': results['dist_coeffs'].flatten().tolist(),
+                'image_size': results['image_size'],
+                'image_paths': [os.path.basename(p) for p in results['image_paths']]
+            }
+            with open(out_file, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"\nSaved calibration results to: '{out_file}'")
+            print("===========================================================")
+        else:
+            print("\nCalibration failed or not enough valid images.")
+            print("===========================================================")
+            sys.exit(1)
+        sys.exit(0)
 
     # 1. Initialize and Run Camera Calibration Pipeline
     try:
