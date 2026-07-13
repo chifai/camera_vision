@@ -521,7 +521,7 @@ def main():
     success = calib.detect_charuco(focal_length=args.focal_length)
     if not success:
         print("Pipeline aborted due to detection or solving failure.")
-        # sys.exit(1)
+        sys.exit(1)
         
     # Output detailed prints
     if calib.marker_ids is not None:
