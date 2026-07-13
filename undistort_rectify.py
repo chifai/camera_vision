@@ -49,6 +49,8 @@ def main():
     # Rectification and Comparison controls
     parser.add_argument("--rectify", action="store_true", 
                         help="Enable perspective rectification (removes roll/pitch/yaw tilt of the board, flattening it).")
+    parser.add_argument("--crop", action="store_true",
+                        help="Crop the output image to remove invalid boundary/edge pixels (uses optimal camera matrix calculation).")
     parser.add_argument("--focal_length", type=float, default=None, 
                         help="Assumed camera focal length in pixels. Defaults to max(width, height)")
     parser.add_argument("--no_comparison", action="store_true",
@@ -90,6 +92,12 @@ def main():
     print(f"  [{args.k1:+.6e}, {args.k2:+.6e}, {args.p1:+.6e}, {args.p2:+.6e}, {args.k3:+.6e}]")
 
     # 3. Compute Undistortion and Rectification Maps
+    K_new = K.copy()
+    roi = None
+    if args.crop:
+        # Calculate optimal camera matrix to crop out black out-of-bounds pixels
+        K_new, roi = cv2.getOptimalNewCameraMatrix(K, D, (w, h), alpha=0.0)
+
     if args.rectify:
         # Convert rotation vector to 3x3 rotation matrix R
         rvec = np.array(args.rvec, dtype=np.float64)
@@ -101,15 +109,22 @@ def main():
         print("Rectification Rotation Matrix (R.T):")
         print(R_rect)
         
-        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
+        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K_new, (w, h), cv2.CV_32FC1)
         mode_str = "undistorted_rectified"
     else:
         print("\nApplying standard lens undistortion (no rotation correction):")
-        map1, map2 = cv2.initUndistortRectifyMap(K, D, None, K, (w, h), cv2.CV_32FC1)
+        map1, map2 = cv2.initUndistortRectifyMap(K, D, None, K_new, (w, h), cv2.CV_32FC1)
         mode_str = "undistorted"
 
     # 4. Warp the Image
     output_img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+
+    # Apply crop if enabled
+    if args.crop and roi is not None:
+        x, y, w_roi, h_roi = roi
+        if w_roi > 0 and h_roi > 0:
+            output_img = output_img[y:y+h_roi, x:x+w_roi]
+        mode_str += "_cropped"
 
     # 5. Save Main Output
     if args.output_path is None:
@@ -160,14 +175,23 @@ def main():
             cv2.putText(bar, title_text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
             return np.vstack((bar, img_src))
 
+        # If the output image was cropped, resize it to match the height of annotated_img
+        # so they can be stacked side-by-side using np.hstack
+        if output_img.shape[0] != h:
+            scale = h / output_img.shape[0]
+            new_w = int(output_img.shape[1] * scale)
+            output_img_resized = cv2.resize(output_img, (new_w, h), interpolation=cv2.INTER_AREA)
+        else:
+            output_img_resized = output_img
+
         # Add titles and stack horizontally
         annotated_titled = add_title(annotated_img, title_left)
-        processed_titled = add_title(output_img, "Undistorted & Rectified View" if args.rectify else "Undistorted View")
+        processed_titled = add_title(output_img_resized, "Undistorted & Rectified View" if args.rectify else "Undistorted View")
         
         comparison_img = np.hstack((annotated_titled, processed_titled))
         
         # Save comparison image
-        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{ext}")
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
         cv2.imwrite(path_comparison, comparison_img)
         print(f"Successfully generated and saved comparison to: '{path_comparison}'")
 

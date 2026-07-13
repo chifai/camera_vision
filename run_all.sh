@@ -2,7 +2,7 @@
 
 echo "Starting batch processing of all PNG images using sobel_finder.py..."
 
-for f in *.png; do
+for f in ./raw/*.png; do
   # Skip already processed or debug images
   if [[ "$f" == *"_debug"* ]] || [[ "$f" == *"_edges"* ]]; then
     continue

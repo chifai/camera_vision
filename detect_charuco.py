@@ -298,6 +298,12 @@ class CameraCalibration:
             f = focal_length if focal_length is not None else float(max(w, h))
             cx = w / 2.0
             cy = h / 2.0
+            # self.K = np.array([
+            #     [2199.678, 0, 1282.006],
+            #     [0, 2203.0518, 959.03865],
+            #     [0, 0, 1]
+            # ], dtype=np.float64)
+            
             self.K = np.array([
                 [f, 0, cx],
                 [0, f, cy],
@@ -391,11 +397,12 @@ class CameraCalibration:
         )
         return annotated_img
 
-    def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None, return_comparison=False):
+    def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None, return_comparison=False, crop=False):
         """
         Undistorts the image. If image is None, uses self.img.
         If dist_coeffs is None, no distortion correction is applied.
         If rvec is None or rectify=False, no perspective rectification is applied.
+        If crop is True, crops the image using cv2.getOptimalNewCameraMatrix to remove invalid boundary pixels.
         If return_comparison is True, returns a tuple (processed_img, side_by_side_comparison_img).
         """
         img_to_process = image if image is not None else self.img
@@ -422,12 +429,33 @@ class CameraCalibration:
             R_mat, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
             R_rect = R_mat.T
                 
-        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K, (w, h), cv2.CV_32FC1)
+        # Resolve camera matrix for warping
+        K_new = K
+        roi = None
+        if crop:
+            # Calculate optimal camera matrix to crop out black out-of-bounds pixels
+            K_new, roi = cv2.getOptimalNewCameraMatrix(K, D, (w, h), alpha=0.0)
+
+        map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K_new, (w, h), cv2.CV_32FC1)
         processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+        
+        if crop and roi is not None:
+            x, y, w_roi, h_roi = roi
+            if w_roi > 0 and h_roi > 0:
+                processed_img = processed_img[y:y+h_roi, x:x+w_roi]
 
         if return_comparison:
             # Generate annotated image
             annotated_img = self.get_annotated_image()
+            
+            # If the processed image was cropped, resize it to match the height of annotated_img
+            # so they can be stacked side-by-side using np.hstack
+            if processed_img.shape[0] != h:
+                scale = h / processed_img.shape[0]
+                new_w = int(processed_img.shape[1] * scale)
+                processed_img_resized = cv2.resize(processed_img, (new_w, h), interpolation=cv2.INTER_AREA)
+            else:
+                processed_img_resized = processed_img
             
             # Helper to add a centered title on top of each image
             def add_title(img_src, title_text, bar_height=80, font_scale=1.2, thickness=3):
@@ -443,7 +471,7 @@ class CameraCalibration:
                 
             # Add titles
             annotated_titled = add_title(annotated_img, "Detected & Annotated View")
-            processed_titled = add_title(processed_img, "Undistorted & Rectified View" if rectify else "Undistorted View")
+            processed_titled = add_title(processed_img_resized, "Undistorted & Rectified View" if rectify else "Undistorted View")
             
             # Stack side-by-side
             comparison_img = np.hstack((annotated_titled, processed_titled))
@@ -468,6 +496,7 @@ def main():
     parser.add_argument("--corner_line_width", type=int, default=3, help="Line width for corner crosshairs (default: 3)")
     parser.add_argument("--corner_font_size", type=float, default=1.2, help="Font scale for corner IDs (default: 1.2)")
     parser.add_argument("--corner_text_thickness", type=int, default=2, help="Font thickness for corner IDs (default: 2)")
+    parser.add_argument("--crop", action="store_true", help="Crop the output image to remove invalid boundary/edge pixels (uses optimal camera matrix calculation)")
     
     args = parser.parse_args()
 
@@ -492,7 +521,7 @@ def main():
     success = calib.detect_charuco(focal_length=args.focal_length)
     if not success:
         print("Pipeline aborted due to detection or solving failure.")
-        sys.exit(1)
+        # sys.exit(1)
         
     # Output detailed prints
     if calib.marker_ids is not None:
@@ -537,12 +566,13 @@ def main():
     )
 
     # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
-    undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs)
+    undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs, crop=args.crop)
     undist_rectified_img, comparison_img = calib.undistort(
         rectify=True, 
         rvec=calib.rvec, 
-        dist_coeffs=None, 
-        return_comparison=True
+        dist_coeffs=calib.dist_coeffs, 
+        return_comparison=True,
+        crop=args.crop
     )
 
     # 4. Save All Outputs
@@ -552,9 +582,9 @@ def main():
     out_dir = "processed" if os.path.isdir("processed") else input_dir
     
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
-    path_undist = os.path.join(out_dir, f"{base_name}_undistorted{ext}")
-    path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{ext}")
-    path_comparison = os.path.join(out_dir, f"{base_name}_comparison{ext}")
+    path_undist = os.path.join(out_dir, f"{base_name}_undistorted{'_cropped' if args.crop else ''}{ext}")
+    path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{'_cropped' if args.crop else ''}{ext}")
+    path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
     
     cv2.imwrite(path_detected, annotated_img)
     cv2.imwrite(path_undist, undist_only_img)
