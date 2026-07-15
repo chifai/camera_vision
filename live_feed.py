@@ -22,7 +22,7 @@ from detect_charuco import CameraCalibration
 
 def main():
     parser = argparse.ArgumentParser(description="Live USB Camera Feed & Interactive ChArUco Detector")
-    parser.add_argument("--index", type=int, default=0, help="Camera device index (default: 0)")
+    parser.add_argument("--index", type=int, default=1, help="Camera device index (default: 0)")
     parser.add_argument("--width", type=int, default=2592, help="Requested frame width (default: 2592)")
     parser.add_argument("--height", type=int, default=1944, help="Requested frame height (default: 1944)")
     
@@ -79,6 +79,8 @@ def main():
     # Interactive variables
     detect_mode = True
     prev_time = time.time()
+    session_save_dir = None
+    capture_count = 0
     
     print("\n-----------------------------------------------------------")
     print(" Interactive Controls:")
@@ -134,12 +136,18 @@ def main():
                 detect_mode = not detect_mode
                 print(f"ChArUco detection overlay toggled: {'ENABLED' if detect_mode else 'DISABLED'}")
             elif key == ord('s'):
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"capture_{timestamp}.png"
-                filepath = os.path.join(save_dir, filename)
+                if session_save_dir is None:
+                    session_timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    session_save_dir = os.path.join(save_dir, f"{session_timestamp}_calibration")
+                    os.makedirs(session_save_dir, exist_ok=True)
+                    print(f"Created session calibration folder: '{session_save_dir}'")
+                
+                filename = f"{capture_count}.png"
+                filepath = os.path.join(session_save_dir, filename)
                 # Save the raw unannotated frame
                 cv2.imwrite(filepath, frame)
-                print(f"Saved snapshot to: '{filepath}'")
+                print(f"Saved snapshot #{capture_count} to: '{filepath}'")
+                capture_count += 1
                 
                 # Short flash visual feedback on save
                 flash = np.ones_like(display_frame) * 255

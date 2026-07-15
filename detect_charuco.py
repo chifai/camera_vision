@@ -910,9 +910,9 @@ class CameraCalibration:
 def main():
     parser = argparse.ArgumentParser(description="Object-oriented Charuco Board Detection and Image Undistortion pipeline.")
     parser.add_argument("image_path", type=str, help="Path to the input image.")
-    parser.add_argument("--squares_x", type=int, default=5, help="Number of squares along X-axis (default: 5)")
+    parser.add_argument("--squares_x", type=int, default=7, help="Number of squares along X-axis (default: 5)")
     parser.add_argument("--squares_y", type=int, default=5, help="Number of squares along Y-axis (default: 5)")
-    parser.add_argument("--square_length", type=float, default=3.0, help="Square length in mm (default: 4.0)")
+    parser.add_argument("--square_length", type=float, default=3.5, help="Square length in mm (default: 4.0)")
     parser.add_argument("--marker_length", type=float, default=2.0, help="Marker length in mm (default: 3.0)")
     parser.add_argument("--focal_length", type=float, default=None, help="Assumed focal length in pixels.")
     
