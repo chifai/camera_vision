@@ -44,6 +44,24 @@ def main():
     parser.add_argument("--auto_mirror", action="store_true", default=True, help="Automatically try mirrored image to maximize corner detection (default: True)")
     parser.add_argument("--no_auto_mirror", action="store_false", dest="auto_mirror", help="Disable auto mirroring")
     
+    # Detector/refinement tuning parameters
+    parser.add_argument("--corner_refinement_method", type=str, default="subpix", choices=["none", "subpix", "contour", "apriltag"],
+                        help="Corner refinement method (default: subpix)")
+    parser.add_argument("--corner_refinement_win_size", type=int, default=5,
+                        help="Window size for subpixel corner refinement (default: 5)")
+    parser.add_argument("--try_refine_markers", action="store_true",
+                        help="Try to refine/find missing markers using board layout (default: False)")
+    parser.add_argument("--min_marker_perimeter_rate", type=float, default=None,
+                        help="Minimum marker perimeter rate (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_constant", type=float, default=None,
+                        help="Adaptive threshold constant (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_min", type=int, default=None,
+                        help="Adaptive threshold window size min (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_max", type=int, default=None,
+                        help="Adaptive threshold window size max (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
+                        help="Adaptive threshold window size step (default: None/OpenCV default)")
+    
     args = parser.parse_args()
     
     # Map dictionary name to constant
@@ -52,9 +70,17 @@ def main():
     # Initialize ChArUco detector parameters
     dictionary = cv2.aruco.getPredefinedDictionary(dict_id)
     board = cv2.aruco.CharucoBoard((args.squares_x, args.squares_y), args.square_length, args.marker_length, dictionary)
-    detector_params = cv2.aruco.DetectorParameters()
-    detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-    detector = cv2.aruco.CharucoDetector(board, detectorParams=detector_params)
+    detector, detector_params, charuco_params = CameraCalibration.create_detector(
+        board,
+        corner_refinement_method=args.corner_refinement_method,
+        corner_refinement_win_size=args.corner_refinement_win_size,
+        try_refine_markers=args.try_refine_markers,
+        min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+        adaptive_thresh_constant=args.adaptive_thresh_constant,
+        adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+        adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+        adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
+    )
     
     # Create output directory
     os.makedirs(args.folder, exist_ok=True)
@@ -142,7 +168,16 @@ def main():
         squares_y=args.squares_y,
         square_length=args.square_length,
         marker_length=args.marker_length,
-        dictionary_id=dict_id
+        dictionary_id=dict_id,
+        auto_mirror=args.auto_mirror,
+        corner_refinement_method=args.corner_refinement_method,
+        corner_refinement_win_size=args.corner_refinement_win_size,
+        try_refine_markers=args.try_refine_markers,
+        min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+        adaptive_thresh_constant=args.adaptive_thresh_constant,
+        adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+        adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+        adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
     )
     
     if success:
@@ -180,7 +215,15 @@ def main():
                     squares_y=args.squares_y,
                     square_length=args.square_length,
                     marker_length=args.marker_length,
-                    dictionary_id=dict_id
+                    dictionary_id=dict_id,
+                    corner_refinement_method=args.corner_refinement_method,
+                    corner_refinement_win_size=args.corner_refinement_win_size,
+                    try_refine_markers=args.try_refine_markers,
+                    min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+                    adaptive_thresh_constant=args.adaptive_thresh_constant,
+                    adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+                    adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+                    adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
                 )
                 if calib.detect_charuco():
                     print(f"\nImage: {os.path.basename(filepath)}")

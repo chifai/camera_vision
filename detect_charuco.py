@@ -134,7 +134,48 @@ def overlay_text_info(
 
 class CameraCalibration:
     """Combines board detection, pose/distortion solving, and image undistortion."""
-    def __init__(self, image_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250):
+    @staticmethod
+    def create_detector(board, corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
+                        min_marker_perimeter_rate=None, adaptive_thresh_constant=None,
+                        adaptive_thresh_win_size_min=None, adaptive_thresh_win_size_max=None, adaptive_thresh_win_size_step=None):
+        detector_params = cv2.aruco.DetectorParameters()
+        
+        methods_map = {
+            "none": cv2.aruco.CORNER_REFINE_NONE,
+            "subpix": cv2.aruco.CORNER_REFINE_SUBPIX,
+            "contour": cv2.aruco.CORNER_REFINE_CONTOUR,
+            "apriltag": cv2.aruco.CORNER_REFINE_APRILTAG
+        }
+        # handle case where corner_refinement_method might be integer already
+        if isinstance(corner_refinement_method, int):
+            detector_params.cornerRefinementMethod = corner_refinement_method
+        else:
+            method_val = methods_map.get(corner_refinement_method.lower(), cv2.aruco.CORNER_REFINE_SUBPIX)
+            detector_params.cornerRefinementMethod = method_val
+            
+        detector_params.cornerRefinementWinSize = corner_refinement_win_size
+        
+        if min_marker_perimeter_rate is not None:
+            detector_params.minMarkerPerimeterRate = min_marker_perimeter_rate
+        if adaptive_thresh_constant is not None:
+            detector_params.adaptiveThreshConstant = adaptive_thresh_constant
+        if adaptive_thresh_win_size_min is not None:
+            detector_params.adaptiveThreshWinSizeMin = adaptive_thresh_win_size_min
+        if adaptive_thresh_win_size_max is not None:
+            detector_params.adaptiveThreshWinSizeMax = adaptive_thresh_win_size_max
+        if adaptive_thresh_win_size_step is not None:
+            detector_params.adaptiveThreshWinSizeStep = adaptive_thresh_win_size_step
+
+        charuco_params = cv2.aruco.CharucoParameters()
+        charuco_params.tryRefineMarkers = try_refine_markers
+
+        detector = cv2.aruco.CharucoDetector(board, charucoParams=charuco_params, detectorParams=detector_params)
+        return detector, detector_params, charuco_params
+
+    def __init__(self, image_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250,
+                 corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
+                 min_marker_perimeter_rate=None, adaptive_thresh_constant=None,
+                 adaptive_thresh_win_size_min=None, adaptive_thresh_win_size_max=None, adaptive_thresh_win_size_step=None):
         self.image_path = image_path
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Error: Image file '{image_path}' does not exist.")
@@ -154,10 +195,18 @@ class CameraCalibration:
         self.dictionary = cv2.aruco.getPredefinedDictionary(self.dictionary_id)
         self.board = cv2.aruco.CharucoBoard((squares_x, squares_y), square_length, marker_length, self.dictionary)
         
-        # Detector Parameters (uses subpixel refinement by default)
-        self.detector_params = cv2.aruco.DetectorParameters()
-        self.detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        self.detector = cv2.aruco.CharucoDetector(self.board, detectorParams=self.detector_params)
+        # Detector Parameters (uses custom or default subpixel refinement)
+        self.detector, self.detector_params, self.charuco_params = self.create_detector(
+            self.board,
+            corner_refinement_method=corner_refinement_method,
+            corner_refinement_win_size=corner_refinement_win_size,
+            try_refine_markers=try_refine_markers,
+            min_marker_perimeter_rate=min_marker_perimeter_rate,
+            adaptive_thresh_constant=adaptive_thresh_constant,
+            adaptive_thresh_win_size_min=adaptive_thresh_win_size_min,
+            adaptive_thresh_win_size_max=adaptive_thresh_win_size_max,
+            adaptive_thresh_win_size_step=adaptive_thresh_win_size_step
+        )
         
         # Class Members for results
         self.charuco_corners = None
@@ -482,7 +531,10 @@ class CameraCalibration:
         return processed_img
 
     @classmethod
-    def calibrate_from_directory(cls, directory_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250, auto_mirror=True):
+    def calibrate_from_directory(cls, directory_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250, auto_mirror=True,
+                                 corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
+                                 min_marker_perimeter_rate=None, adaptive_thresh_constant=None,
+                                 adaptive_thresh_win_size_min=None, adaptive_thresh_win_size_max=None, adaptive_thresh_win_size_step=None):
         """
         Scans a directory for calibration images, detects Charuco corners, and solves for the camera intrinsics and distortion.
         
@@ -495,9 +547,17 @@ class CameraCalibration:
         dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
         board = cv2.aruco.CharucoBoard((squares_x, squares_y), square_length, marker_length, dictionary)
         
-        detector_params = cv2.aruco.DetectorParameters()
-        detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        detector = cv2.aruco.CharucoDetector(board, detectorParams=detector_params)
+        detector, detector_params, charuco_params = cls.create_detector(
+            board,
+            corner_refinement_method=corner_refinement_method,
+            corner_refinement_win_size=corner_refinement_win_size,
+            try_refine_markers=try_refine_markers,
+            min_marker_perimeter_rate=min_marker_perimeter_rate,
+            adaptive_thresh_constant=adaptive_thresh_constant,
+            adaptive_thresh_win_size_min=adaptive_thresh_win_size_min,
+            adaptive_thresh_win_size_max=adaptive_thresh_win_size_max,
+            adaptive_thresh_win_size_step=adaptive_thresh_win_size_step
+        )
         
         # Grab all image files
         valid_extensions = {".png", ".jpg", ".jpeg"}
@@ -624,6 +684,24 @@ def main():
     parser.add_argument("--corner_text_thickness", type=int, default=2, help="Font thickness for corner IDs (default: 2)")
     parser.add_argument("--crop", action="store_true", help="Crop the output image to remove invalid boundary/edge pixels (uses optimal camera matrix calculation)")
     
+    # Detector/refinement tuning parameters
+    parser.add_argument("--corner_refinement_method", type=str, default="subpix", choices=["none", "subpix", "contour", "apriltag"],
+                        help="Corner refinement method (default: subpix)")
+    parser.add_argument("--corner_refinement_win_size", type=int, default=5,
+                        help="Window size for subpixel corner refinement (default: 5)")
+    parser.add_argument("--try_refine_markers", action="store_true",
+                        help="Try to refine/find missing markers using board layout (default: False)")
+    parser.add_argument("--min_marker_perimeter_rate", type=float, default=None,
+                        help="Minimum marker perimeter rate (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_constant", type=float, default=None,
+                        help="Adaptive threshold constant (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_min", type=int, default=None,
+                        help="Adaptive threshold window size min (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_max", type=int, default=None,
+                        help="Adaptive threshold window size max (default: None/OpenCV default)")
+    parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
+                        help="Adaptive threshold window size step (default: None/OpenCV default)")
+    
     args = parser.parse_args()
 
     # Load Image
@@ -638,7 +716,15 @@ def main():
             squares_x=args.squares_x,
             squares_y=args.squares_y,
             square_length=args.square_length,
-            marker_length=args.marker_length
+            marker_length=args.marker_length,
+            corner_refinement_method=args.corner_refinement_method,
+            corner_refinement_win_size=args.corner_refinement_win_size,
+            try_refine_markers=args.try_refine_markers,
+            min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+            adaptive_thresh_constant=args.adaptive_thresh_constant,
+            adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+            adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+            adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
         )
         if success:
             print("\n===========================================================")
@@ -678,7 +764,15 @@ def main():
             squares_x=args.squares_x,
             squares_y=args.squares_y,
             square_length=args.square_length,
-            marker_length=args.marker_length
+            marker_length=args.marker_length,
+            corner_refinement_method=args.corner_refinement_method,
+            corner_refinement_win_size=args.corner_refinement_win_size,
+            try_refine_markers=args.try_refine_markers,
+            min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+            adaptive_thresh_constant=args.adaptive_thresh_constant,
+            adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+            adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+            adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
         )
     except Exception as e:
         print(e)
