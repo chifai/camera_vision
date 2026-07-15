@@ -1211,6 +1211,114 @@ def main():
                 writer.writerow([cid, float(pt[0]), float(pt[1])])
         print(f"Saved corners CSV:       '{csv_path}'")
         
+    # Run the detection again on the rectified image and save to another subfolder
+    print(f"\n===========================================================")
+    print(f" Starting Second-Pass Detection on Rectified Image")
+    print(f"===========================================================")
+    
+    # 1. Create a subfolder inside the main out_dir
+    rectified_out_dir = os.path.join(out_dir, "rectified_detection")
+    os.makedirs(rectified_out_dir, exist_ok=True)
+    
+    # 2. Instantiate a new CameraCalibration object for the rectified image.
+    try:
+        rectified_calib = CameraCalibration(
+            image_path=path_rectified,
+            squares_x=args.squares_x,
+            squares_y=args.squares_y,
+            square_length=args.square_length,
+            marker_length=args.marker_length,
+            corner_refinement_method=args.corner_refinement_method,
+            corner_refinement_win_size=args.corner_refinement_win_size,
+            try_refine_markers=args.try_refine_markers,
+            min_marker_perimeter_rate=args.min_marker_perimeter_rate,
+            adaptive_thresh_constant=args.adaptive_thresh_constant,
+            adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
+            adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
+            adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
+        )
+    except Exception as e:
+        print(f"Error loading rectified image: {e}")
+        sys.exit(1)
+        
+    rectified_success = rectified_calib.detect_charuco(focal_length=args.focal_length)
+    if not rectified_success:
+        print("Second-pass detection on rectified image failed or not enough corners found.")
+    else:
+        print(f"Detected {len(rectified_calib.charuco_corners)} corners on rectified image.")
+        
+        # 3. Output corners plot image
+        rectified_corners_plot = rectified_calib.get_corners_distance_plot()
+        rectified_base_name, _ = os.path.splitext(os.path.basename(path_rectified))
+        rectified_plot_path = os.path.join(rectified_out_dir, f"{rectified_base_name}_corners_plot{ext}")
+        cv2.imwrite(rectified_plot_path, rectified_corners_plot)
+        print(f"Saved rectified corners plot:  '{rectified_plot_path}'")
+        
+        # 4. Output corners csv
+        rectified_csv_path = os.path.join(rectified_out_dir, f"{rectified_base_name}_corners.csv")
+        with open(rectified_csv_path, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["corner_id", "x", "y"])
+            for i in range(len(rectified_calib.charuco_ids)):
+                cid = int(rectified_calib.charuco_ids[i][0])
+                pt = rectified_calib.charuco_corners[i][0]
+                writer.writerow([cid, float(pt[0]), float(pt[1])])
+        print(f"Saved rectified corners CSV:   '{rectified_csv_path}'")
+        
+        # 5. Output json result
+        rectified_row_ratios, rectified_col_ratios = rectified_calib.calculate_row_col_ratios()
+        rectified_results_data = {
+            "timestamp": timestamp,
+            "image_path": os.path.abspath(path_rectified),
+            "squares_x": args.squares_x,
+            "squares_y": args.squares_y,
+            "square_length": args.square_length,
+            "marker_length": args.marker_length,
+            "detected_markers": len(rectified_calib.marker_ids) if rectified_calib.marker_ids is not None else 0,
+            "detected_corners": len(rectified_calib.charuco_corners) if rectified_calib.charuco_corners is not None else 0,
+            "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in rectified_row_ratios.items()},
+            "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in rectified_col_ratios.items()}
+        }
+        
+        if rectified_calib.mm_per_px_h is not None:
+            rectified_results_data.update({
+                "mm_per_px_h": float(rectified_calib.mm_per_px_h),
+                "mm_per_px_v": float(rectified_calib.mm_per_px_v),
+                "px_per_mm_h": float(rectified_calib.px_per_mm_h),
+                "px_per_mm_v": float(rectified_calib.px_per_mm_v)
+            })
+            
+        if rectified_calib.collin_max is not None:
+            rectified_results_data.update({
+                "collinear_deviation_max_px": float(rectified_calib.collin_max),
+                "collinear_deviation_rms_px": float(rectified_calib.collin_rms)
+            })
+            
+        if rectified_calib.reproj_mean is not None:
+            rectified_results_data.update({
+                "reprojection_error_mean_px": float(rectified_calib.reproj_mean),
+                "reprojection_error_max_px": float(rectified_calib.reproj_max)
+            })
+            
+        if rectified_calib.K is not None:
+            rectified_results_data.update({
+                "K": rectified_calib.K.tolist(),
+                "dist_coeffs": rectified_calib.dist_coeffs.flatten().tolist() if rectified_calib.dist_coeffs is not None else [0.0]*5
+            })
+            
+        if rectified_calib.rvec is not None:
+            rectified_results_data.update({
+                "rvec": rectified_calib.rvec.flatten().tolist(),
+                "tvec": rectified_calib.tvec.flatten().tolist(),
+                "pose_depth_mm": float(rectified_calib.pose_depth),
+                "euler_xyz_pitch_yaw_roll_deg": rectified_calib.euler_xyz.tolist() if rectified_calib.euler_xyz is not None else None
+            })
+            
+        rectified_json_path = os.path.join(rectified_out_dir, f"{rectified_base_name}_results.json")
+        with open(rectified_json_path, "w") as f:
+            json.dump(rectified_results_data, f, indent=4)
+        print(f"Saved rectified results JSON:  '{rectified_json_path}'")
+        
     print("Combined Pipeline executed successfully!")
 
 if __name__ == "__main__":
