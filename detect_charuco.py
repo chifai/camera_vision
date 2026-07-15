@@ -710,6 +710,8 @@ def main():
                         help="Adaptive threshold window size max (default: None/OpenCV default)")
     parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
+    parser.add_argument("--output_dir", type=str, default="../output",
+                        help="Base directory for output files (default: ../output)")
     parser.add_argument("--undistort", action="store_true",
                         help="Apply undistortion and perspective rectification in the end (default: False)")
     
@@ -838,11 +840,19 @@ def main():
         corner_text_thickness=args.corner_text_thickness
     )
 
-    # 4. Save Outputs
+    # 4. Save Outputs and Results JSON to timestamped folder in output directory
+    import datetime
+    import json
+    
     input_dir, input_name = os.path.split(image_path)
     base_name, ext = os.path.splitext(input_name)
     
-    out_dir = "processed" if os.path.isdir("processed") else input_dir
+    timestamp = datetime.datetime.now().strftime("%y%m%d_%H%M%S")
+    out_dir_name = f"{timestamp}_{base_name}"
+    
+    # Resolve the final output directory path
+    out_dir = os.path.abspath(os.path.join(args.output_dir, out_dir_name))
+    os.makedirs(out_dir, exist_ok=True)
     
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
     cv2.imwrite(path_detected, annotated_img)
@@ -885,6 +895,57 @@ def main():
         cv2.imwrite(path_comparison, comparison_img)
         print(f"Saved rectified image:   '{path_rectified}'")
         print(f"Saved comparison image:  '{path_comparison}'")
+        
+    # Output results in json format to the folder
+    results_data = {
+        "timestamp": timestamp,
+        "image_path": os.path.abspath(image_path),
+        "squares_x": args.squares_x,
+        "squares_y": args.squares_y,
+        "square_length": args.square_length,
+        "marker_length": args.marker_length,
+        "detected_markers": len(calib.marker_ids) if calib.marker_ids is not None else 0,
+        "detected_corners": len(calib.charuco_corners) if calib.charuco_corners is not None else 0,
+    }
+    
+    if calib.mm_per_px_h is not None:
+        results_data.update({
+            "mm_per_px_h": float(calib.mm_per_px_h),
+            "mm_per_px_v": float(calib.mm_per_px_v),
+            "px_per_mm_h": float(calib.px_per_mm_h),
+            "px_per_mm_v": float(calib.px_per_mm_v)
+        })
+        
+    if calib.collin_max is not None:
+        results_data.update({
+            "collinear_deviation_max_px": float(calib.collin_max),
+            "collinear_deviation_rms_px": float(calib.collin_rms)
+        })
+        
+    if calib.reproj_mean is not None:
+        results_data.update({
+            "reprojection_error_mean_px": float(calib.reproj_mean),
+            "reprojection_error_max_px": float(calib.reproj_max)
+        })
+        
+    if calib.K is not None:
+        results_data.update({
+            "K": calib.K.tolist(),
+            "dist_coeffs": calib.dist_coeffs.flatten().tolist() if calib.dist_coeffs is not None else [0.0]*5
+        })
+        
+    if calib.rvec is not None:
+        results_data.update({
+            "rvec": calib.rvec.flatten().tolist(),
+            "tvec": calib.tvec.flatten().tolist(),
+            "pose_depth_mm": float(calib.pose_depth),
+            "euler_xyz_pitch_yaw_roll_deg": calib.euler_xyz.tolist() if calib.euler_xyz is not None else None
+        })
+        
+    json_path = os.path.join(out_dir, f"{base_name}_results.json")
+    with open(json_path, "w") as f:
+        json.dump(results_data, f, indent=4)
+    print(f"Saved results JSON:      '{json_path}'")
         
     print("Combined Pipeline executed successfully!")
 
