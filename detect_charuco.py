@@ -149,6 +149,8 @@ class CameraCalibration:
         self.marker_length = marker_length
         self.dictionary_id = dictionary_id
         
+        print(f"param: {squares_x}, {squares_y}, {square_length}, {marker_length}")
+        
         self.dictionary = cv2.aruco.getPredefinedDictionary(self.dictionary_id)
         self.board = cv2.aruco.CharucoBoard((squares_x, squares_y), square_length, marker_length, self.dictionary)
         
@@ -537,12 +539,24 @@ class CameraCalibration:
                 n_flipped_corners = len(flipped_corners) if flipped_corners is not None else 0
                 
                 if n_flipped_corners > n_corners:
+                    # Map the flipped corners back to the original image coordinate frame
+                    flipped_corners[:, 0, 0] = w - 1 - flipped_corners[:, 0, 0]
                     corners = flipped_corners
                     ids = flipped_ids
                     n_corners = n_flipped_corners
                     is_flipped = True
             
             if n_corners >= 4:
+                # Proactively check homography to prevent calibration crashes due to degenerate/collinear corner points
+                all_obj_points = board.getChessboardCorners()
+                obj_pts = np.array([all_obj_points[cid[0]] for cid in ids], dtype=np.float32)
+                img_pts = np.array([c[0] for c in corners], dtype=np.float32)
+                
+                H, _ = cv2.findHomography(obj_pts[:, :2], img_pts)
+                if H is None or H.shape != (3, 3):
+                    print(f"  Skipping '{os.path.basename(filepath)}': Homography estimation failed (degenerate/collinear points).")
+                    continue
+
                 all_corners.append(corners)
                 all_ids.append(ids)
                 used_image_paths.append(filepath)
@@ -596,8 +610,8 @@ def main():
     parser.add_argument("image_path", type=str, help="Path to the input image.")
     parser.add_argument("--squares_x", type=int, default=5, help="Number of squares along X-axis (default: 5)")
     parser.add_argument("--squares_y", type=int, default=5, help="Number of squares along Y-axis (default: 5)")
-    parser.add_argument("--square_length", type=float, default=4.0, help="Square length in mm (default: 4.0)")
-    parser.add_argument("--marker_length", type=float, default=3.0, help="Marker length in mm (default: 3.0)")
+    parser.add_argument("--square_length", type=float, default=3.0, help="Square length in mm (default: 4.0)")
+    parser.add_argument("--marker_length", type=float, default=2.0, help="Marker length in mm (default: 3.0)")
     parser.add_argument("--focal_length", type=float, default=None, help="Assumed focal length in pixels.")
     
     # Custom Overlay parameters

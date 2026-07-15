@@ -98,7 +98,6 @@ def main():
                             corners = flipped_corners
                             ids = flipped_ids
                             num_corners = n_flipped_corners
-                            img = flipped_img
                             is_flipped = True
                     
                     mirror_suffix = " (Mirrored)" if is_flipped else ""
