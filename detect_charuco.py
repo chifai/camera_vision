@@ -712,6 +712,8 @@ def main():
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
     parser.add_argument("--output_dir", type=str, default="./output",
                         help="Base directory for output files (default: ./output)")
+    parser.add_argument("--format", type=str, default=None, choices=["png", "jpg", "jpeg"],
+                        help="Output image format (default: matches input image format)")
     parser.add_argument("--undistort", action="store_true",
                         help="Apply undistortion and perspective rectification in the end (default: False)")
     
@@ -840,13 +842,22 @@ def main():
         corner_text_thickness=args.corner_text_thickness
     )
 
-    # 4. Save Outputs and Results JSON to timestamped folder in output directory
+    # 4. Save Outputs and Results JSON/CSV to timestamped folder in output directory
     import datetime
     import json
+    import csv
     
     input_dir, input_name = os.path.split(image_path)
-    base_name, ext = os.path.splitext(input_name)
+    base_name, input_ext = os.path.splitext(input_name)
     
+    # Determine output format/extension
+    if args.format:
+        ext = f".{args.format.lower()}"
+        if ext == ".jpeg":
+            ext = ".jpg"
+    else:
+        ext = input_ext
+        
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir_name = f"{timestamp}_{base_name}"
     
@@ -946,6 +957,18 @@ def main():
     with open(json_path, "w") as f:
         json.dump(results_data, f, indent=4)
     print(f"Saved results JSON:      '{json_path}'")
+    
+    # Export Charuco corners coordinates into a CSV file in the same folder
+    if calib.charuco_corners is not None and calib.charuco_ids is not None:
+        csv_path = os.path.join(out_dir, f"{base_name}_corners.csv")
+        with open(csv_path, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["corner_id", "x", "y"])
+            for i in range(len(calib.charuco_ids)):
+                cid = int(calib.charuco_ids[i][0])
+                pt = calib.charuco_corners[i][0]
+                writer.writerow([cid, float(pt[0]), float(pt[1])])
+        print(f"Saved corners CSV:       '{csv_path}'")
         
     print("Combined Pipeline executed successfully!")
 
