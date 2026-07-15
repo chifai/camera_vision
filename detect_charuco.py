@@ -30,110 +30,113 @@ COLOR_RED = (0, 0, 255)
 COLOR_TEXT = (0, 0, 0)
 COLOR_TITLE = (0, 0, 0)
 
-def draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
-    """Draws detected ArUco markers with custom line width and larger, highly visible font."""
-    if ids is None or corners is None:
-        return
-    for i, marker_id in enumerate(ids):
-        pts = corners[i][0].astype(np.int32)
-        # Draw the 4 border lines of the marker
-        for j in range(4):
-            cv2.line(image, tuple(pts[j]), tuple(pts[(j + 1) % 4]), COLOR_GREEN, line_thickness)
-        
-        # Draw a small red circle on the first corner (top-left by convention)
-        cv2.circle(image, tuple(pts[0]), line_thickness + 2, COLOR_RED, -1)
-        
-        # Write marker ID text with a black outline for high contrast/legibility
-        text = f"id={marker_id[0]}"
-        text_org = (int(pts[0][0]) - 15, int(pts[0][1]) - 15)
-        # Black outline
-        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
-        # Green text
-        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_GREEN, text_thickness, cv2.LINE_AA)
-
-def draw_detected_corners_charuco_custom(image, corners, ids, corner_radius=10, line_thickness=3, font_scale=1.2, text_thickness=2):
-    """Draws detected Charuco chessboard corners with custom sizes and custom text labels."""
-    if ids is None or corners is None:
-        return
-    for i, corner_id in enumerate(ids):
-        pt = tuple(corners[i][0].astype(np.int32))
-        cid_val = corner_id[0]
-        
-        # Draw a custom target crosshair
-        # Red outer ring
-        cv2.circle(image, pt, corner_radius, COLOR_RED, line_thickness, cv2.LINE_AA)
-        # Inner dot
-        cv2.circle(image, pt, 2, COLOR_RED, -1, cv2.LINE_AA)
-        # Crosshair lines
-        cv2.line(image, (pt[0] - corner_radius - 4, pt[1]), (pt[0] + corner_radius + 4, pt[1]), COLOR_RED, line_thickness)
-        cv2.line(image, (pt[0], pt[1] - corner_radius - 4), (pt[0], pt[1] + corner_radius + 4), COLOR_RED, line_thickness)
-        
-        # Write corner ID text with a black outline for contrast
-        text = str(cid_val)
-        text_org = (pt[0] + corner_radius + 6, pt[1] - corner_radius - 2)
-        # Black outline
-        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
-        # Yellow text
-        cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_YELLOW, text_thickness, cv2.LINE_AA)
-
-def overlay_text_info(
-    image, w, h, num_markers, num_corners,
-    mm_per_px_h=None, mm_per_px_v=None, px_per_mm_h=None, px_per_mm_v=None,
-    pose_depth=None, euler_xyz=None, collin_max=None, reproj_mean=None,
-    solved_dist_coeffs=None,
-    font_scale=0.9, thickness=2, color=COLOR_TEXT
-):
-    """Overlays calculated parameters (orientation, scale, distortion) as text on the image."""
-    y_offset = 40
-    line_height = 35
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, COLOR_TITLE, 3)
-    y_offset += 45
-    
-    cv2.putText(image, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
-    y_offset += line_height
-    
-    cv2.putText(image, f"Markers: {num_markers} | Corners: {num_corners}", (30, y_offset), font, font_scale, color, thickness)
-    y_offset += line_height
-    
-    if mm_per_px_h is not None and mm_per_px_v is not None:
-        cv2.putText(image, f"Scale (X): {mm_per_px_h:.5f} mm/px ({px_per_mm_h:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"Scale (Y): {mm_per_px_v:.5f} mm/px ({px_per_mm_v:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        
-    if euler_xyz is not None:
-        cv2.putText(image, f"Pose Z (depth): {pose_depth:.1f} mm", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"Roll (Z-rot):  {euler_xyz[2]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"Pitch (X-rot): {euler_xyz[0]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        
-    if collin_max is not None:
-        cv2.putText(image, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-    if reproj_mean is not None:
-        cv2.putText(image, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        
-    if solved_dist_coeffs is not None:
-        cv2.putText(image, f"k1 (radial 1): {solved_dist_coeffs[0]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"k2 (radial 2): {solved_dist_coeffs[1]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"p1 (tang 1):   {solved_dist_coeffs[2]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"p1 (tang 2):   {solved_dist_coeffs[3]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
-        y_offset += line_height
-        cv2.putText(image, f"k3 (radial 3):   {solved_dist_coeffs[4]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
-        
-
 class CameraCalibration:
     """Combines board detection, pose/distortion solving, and image undistortion."""
+
+    @staticmethod
+    def __draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
+        """Draws detected ArUco markers with custom line width and larger, highly visible font."""
+        if ids is None or corners is None:
+            return
+        for i, marker_id in enumerate(ids):
+            pts = corners[i][0].astype(np.int32)
+            # Draw the 4 border lines of the marker
+            for j in range(4):
+                cv2.line(image, tuple(pts[j]), tuple(pts[(j + 1) % 4]), COLOR_GREEN, line_thickness)
+            
+            # Draw a small red circle on the first corner (top-left by convention)
+            cv2.circle(image, tuple(pts[0]), line_thickness + 2, COLOR_RED, -1)
+            
+            # Write marker ID text with a black outline for high contrast/legibility
+            text = f"id={marker_id[0]}"
+            text_org = (int(pts[0][0]) - 15, int(pts[0][1]) - 15)
+            # Black outline
+            cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
+            # Green text
+            cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_GREEN, text_thickness, cv2.LINE_AA)
+
+    @staticmethod
+    def __draw_detected_corners_charuco_custom(image, corners, ids, corner_radius=10, line_thickness=3, font_scale=1.2, text_thickness=2):
+        """Draws detected Charuco chessboard corners with custom sizes and custom text labels."""
+        if ids is None or corners is None:
+            return
+        for i, corner_id in enumerate(ids):
+            pt = tuple(corners[i][0].astype(np.int32))
+            cid_val = corner_id[0]
+            
+            # Draw a custom target crosshair
+            # Red outer ring
+            cv2.circle(image, pt, corner_radius, COLOR_RED, line_thickness, cv2.LINE_AA)
+            # Inner dot
+            cv2.circle(image, pt, 2, COLOR_RED, -1, cv2.LINE_AA)
+            # Crosshair lines
+            cv2.line(image, (pt[0] - corner_radius - 4, pt[1]), (pt[0] + corner_radius + 4, pt[1]), COLOR_RED, line_thickness)
+            cv2.line(image, (pt[0], pt[1] - corner_radius - 4), (pt[0], pt[1] + corner_radius + 4), COLOR_RED, line_thickness)
+            
+            # Write corner ID text with a black outline for contrast
+            text = str(cid_val)
+            text_org = (pt[0] + corner_radius + 6, pt[1] - corner_radius - 2)
+            # Black outline
+            cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
+            # Yellow text
+            cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_YELLOW, text_thickness, cv2.LINE_AA)
+
+    @staticmethod
+    def __overlay_text_info(
+        image, w, h, num_markers, num_corners,
+        mm_per_px_h=None, mm_per_px_v=None, px_per_mm_h=None, px_per_mm_v=None,
+        pose_depth=None, euler_xyz=None, collin_max=None, reproj_mean=None,
+        solved_dist_coeffs=None,
+        font_scale=0.9, thickness=2, color=COLOR_TEXT
+    ):
+        """Overlays calculated parameters (orientation, scale, distortion) as text on the image."""
+        y_offset = 40
+        line_height = 35
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, COLOR_TITLE, 3)
+        y_offset += 45
+        
+        cv2.putText(image, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+        cv2.putText(image, f"Markers: {num_markers} | Corners: {num_corners}", (30, y_offset), font, font_scale, color, thickness)
+        y_offset += line_height
+        
+        if mm_per_px_h is not None and mm_per_px_v is not None:
+            cv2.putText(image, f"Scale (X): {mm_per_px_h:.5f} mm/px ({px_per_mm_h:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"Scale (Y): {mm_per_px_v:.5f} mm/px ({px_per_mm_v:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            
+        if euler_xyz is not None:
+            cv2.putText(image, f"Pose Z (depth): {pose_depth:.1f} mm", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"Roll (Z-rot):  {euler_xyz[2]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"Pitch (X-rot): {euler_xyz[0]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            
+        if collin_max is not None:
+            cv2.putText(image, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+        if reproj_mean is not None:
+            cv2.putText(image, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            
+        if solved_dist_coeffs is not None:
+            cv2.putText(image, f"k1 (radial 1): {solved_dist_coeffs[0]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"k2 (radial 2): {solved_dist_coeffs[1]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"p1 (tang 1):   {solved_dist_coeffs[2]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"p1 (tang 2):   {solved_dist_coeffs[3]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+            y_offset += line_height
+            cv2.putText(image, f"k3 (radial 3):   {solved_dist_coeffs[4]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+
     @staticmethod
     def create_detector(board, corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
                         min_marker_perimeter_rate=None, adaptive_thresh_constant=None,
@@ -415,7 +418,7 @@ class CameraCalibration:
         """Generates and returns the annotated image with all overlays and text info."""
         annotated_img = self.img.copy()
         if self.marker_ids is not None:
-            draw_detected_markers_custom(
+            self.__draw_detected_markers_custom(
                 annotated_img, 
                 self.marker_corners, 
                 self.marker_ids, 
@@ -424,7 +427,7 @@ class CameraCalibration:
                 text_thickness=marker_text_thickness
             )
         if self.charuco_corners is not None:
-            draw_detected_corners_charuco_custom(
+            self.__draw_detected_corners_charuco_custom(
                 annotated_img, 
                 self.charuco_corners, 
                 self.charuco_ids, 
@@ -437,7 +440,7 @@ class CameraCalibration:
             cv2.drawFrameAxes(annotated_img, self.K.astype(np.float32), np.zeros(5, dtype=np.float32), self.rvec.astype(np.float32), self.tvec.astype(np.float32), length=self.square_length * 2.0, thickness=3)
 
         # Apply Text Overlay to detected image
-        overlay_text_info(
+        self.__overlay_text_info(
             annotated_img, self.w, self.h, len(self.marker_ids) if self.marker_ids is not None else 0, len(self.charuco_corners) if self.charuco_corners is not None else 0,
             mm_per_px_h=self.mm_per_px_h, mm_per_px_v=self.mm_per_px_v,
             px_per_mm_h=self.px_per_mm_h, px_per_mm_v=self.px_per_mm_v,
