@@ -539,6 +539,146 @@ class CameraCalibration:
             
         return processed_img
 
+    def calculate_corners_in_mm(self):
+        """
+        Reconstructs the 2D coordinates of all detected corners in mm on the board plane.
+        Returns a dictionary mapping cid to (X_mm, Y_mm).
+        """
+        if self.charuco_corners is None or self.charuco_ids is None:
+            return {}
+            
+        pts_px = self.charuco_corners.reshape(-1, 2)
+        
+        if self.rvec is not None and self.tvec is not None and self.K is not None:
+            # Use camera pose for back-projection (undistorted)
+            R, _ = cv2.Rodrigues(self.rvec)
+            dist_coeffs = self.dist_coeffs if self.dist_coeffs is not None else np.zeros(5)
+            pts_undist = cv2.undistortPoints(pts_px.reshape(-1, 1, 2), self.K, dist_coeffs).reshape(-1, 2)
+            
+            pts_mm = []
+            for i in range(len(pts_undist)):
+                x_n, y_n = pts_undist[i]
+                M = np.zeros((3, 3))
+                M[:, 0] = R[:, 0]
+                M[:, 1] = R[:, 1]
+                M[:, 2] = -np.array([x_n, y_n, 1.0])
+                try:
+                    res = np.linalg.solve(M, -self.tvec.flatten())
+                    pts_mm.append((res[0], res[1]))
+                except np.linalg.LinAlgError:
+                    # Fallback to homography if singular
+                    pts_mm.append((0.0, 0.0))
+            pts_mm = np.array(pts_mm)
+        else:
+            # Use homography
+            all_board_corners = self.board.getChessboardCorners()
+            obj_pts = np.array([all_board_corners[cid[0]][:2] for cid in self.charuco_ids], dtype=np.float32)
+            img_pts = np.array([c[0] for c in self.charuco_corners], dtype=np.float32)
+            H, _ = cv2.findHomography(img_pts, obj_pts)
+            
+            pts_homg = np.hstack([pts_px, np.ones((len(pts_px), 1))])
+            pts_mm = (H @ pts_homg.T).T
+            pts_mm = pts_mm[:, :2] / pts_mm[:, 2:3]
+            
+        return {cid: (pt[0], pt[1]) for cid, pt in zip(self.charuco_ids.flatten(), pts_mm)}
+
+    def get_corners_distance_plot(self):
+        """
+        Plots all detected corners with a red dot of 10 pixels radius.
+        Connects adjacent corners with lines and displays the distance between them in mm.
+        """
+        plot_img = self.img.copy()
+        if self.charuco_corners is None or self.charuco_ids is None:
+            return plot_img
+            
+        # Get coordinates in mm on the board plane
+        pts_mm_map = self.calculate_corners_in_mm()
+        
+        # Create map of pixel coordinates
+        pts_px_map = {cid: tuple(pt) for cid, pt in zip(self.charuco_ids.flatten(), self.charuco_corners.reshape(-1, 2))}
+        
+        cols = self.squares_x - 1
+        rows = self.squares_y - 1
+        
+        # 1. Plot all corners with a red dot of 10 pixels radius
+        for cid, pt in pts_px_map.items():
+            center = (int(round(pt[0])), int(round(pt[1])))
+            cv2.circle(plot_img, center, 10, COLOR_RED, -1, cv2.LINE_AA)
+            # Write the corner ID in yellow for visibility
+            cv2.putText(plot_img, str(cid), (center[0] + 12, center[1] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_YELLOW, 2, cv2.LINE_AA)
+
+        # 2. Draw connections and write distances in mm
+        drawn_connections = set()
+        
+        for cid in pts_px_map.keys():
+            r = cid // cols
+            c = cid % cols
+            
+            # Check right neighbor
+            if c + 1 < cols and (cid + 1) in pts_px_map:
+                pair = tuple(sorted((cid, cid + 1)))
+                if pair not in drawn_connections:
+                    drawn_connections.add(pair)
+                    p1 = pts_px_map[cid]
+                    p2 = pts_px_map[cid + 1]
+                    
+                    # Calculate distance in mm
+                    mm1 = pts_mm_map.get(cid, (0, 0))
+                    mm2 = pts_mm_map.get(cid + 1, (0, 0))
+                    dist_mm = math.sqrt((mm1[0] - mm2[0])**2 + (mm1[1] - mm2[1])**2)
+                    
+                    # Draw connection line (green line)
+                    pt1 = (int(round(p1[0])), int(round(p1[1])))
+                    pt2 = (int(round(p2[0])), int(round(p2[1])))
+                    cv2.line(plot_img, pt1, pt2, COLOR_GREEN, 2, cv2.LINE_AA)
+                    
+                    # Draw text for distance at the midpoint
+                    mid = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
+                    text = f"{dist_mm:.2f}mm"
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    scale = 0.6
+                    thick = 2
+                    (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
+                    
+                    # Center the box
+                    bg_pt1 = (mid[0] - tw // 2 - 4, mid[1] - th // 2 - 4)
+                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + tw // 2 + 4)
+                    cv2.rectangle(plot_img, bg_pt1, bg_pt2, (0, 0, 0), -1)
+                    cv2.putText(plot_img, text, (mid[0] - tw // 2, mid[1] + th // 2), font, scale, COLOR_YELLOW, thick, cv2.LINE_AA)
+                    
+            # Check bottom neighbor
+            if r + 1 < rows and (cid + cols) in pts_px_map:
+                pair = tuple(sorted((cid, cid + cols)))
+                if pair not in drawn_connections:
+                    drawn_connections.add(pair)
+                    p1 = pts_px_map[cid]
+                    p2 = pts_px_map[cid + cols]
+                    
+                    # Calculate distance in mm
+                    mm1 = pts_mm_map.get(cid, (0, 0))
+                    mm2 = pts_mm_map.get(cid + cols, (0, 0))
+                    dist_mm = math.sqrt((mm1[0] - mm2[0])**2 + (mm1[1] - mm2[1])**2)
+                    
+                    # Draw connection line (green line)
+                    pt1 = (int(round(p1[0])), int(round(p1[1])))
+                    pt2 = (int(round(p2[0])), int(round(p2[1])))
+                    cv2.line(plot_img, pt1, pt2, COLOR_GREEN, 2, cv2.LINE_AA)
+                    
+                    # Draw text for distance at the midpoint
+                    mid = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
+                    text = f"{dist_mm:.2f}mm"
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    scale = 0.6
+                    thick = 2
+                    (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
+                    
+                    bg_pt1 = (mid[0] - tw // 2 - 4, mid[1] - th // 2 - 4)
+                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + tw // 2 + 4)
+                    cv2.rectangle(plot_img, bg_pt1, bg_pt2, (0, 0, 0), -1)
+                    cv2.putText(plot_img, text, (mid[0] - tw // 2, mid[1] + th // 2), font, scale, COLOR_YELLOW, thick, cv2.LINE_AA)
+                    
+        return plot_img
+
     @classmethod
     def calibrate_from_directory(cls, directory_path, squares_x=5, squares_y=5, square_length=4.0, marker_length=3.0, dictionary_id=cv2.aruco.DICT_4X4_250, auto_mirror=True,
                                  corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
@@ -712,7 +852,7 @@ def main():
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
     parser.add_argument("--output_dir", type=str, default="./output",
                         help="Base directory for output files (default: ./output)")
-    parser.add_argument("--format", type=str, default=None, choices=["png", "jpg", "jpeg"],
+    parser.add_argument("--format", type=str, default="png", choices=["png", "jpg", "jpeg"],
                         help="Output image format (default: matches input image format)")
     parser.add_argument("--undistort", action="store_true",
                         help="Apply undistortion and perspective rectification in the end (default: False)")
@@ -868,6 +1008,12 @@ def main():
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
     cv2.imwrite(path_detected, annotated_img)
     print(f"\nSaved annotated image: '{path_detected}'")
+    
+    # Generate and save corners distance plot image
+    corners_plot_img = calib.get_corners_distance_plot()
+    path_corners_plot = os.path.join(out_dir, f"{base_name}_corners_plot{ext}")
+    cv2.imwrite(path_corners_plot, corners_plot_img)
+    print(f"Saved corners plot:      '{path_corners_plot}'")
     
     if args.undistort:
         # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
