@@ -710,8 +710,8 @@ def main():
                         help="Adaptive threshold window size max (default: None/OpenCV default)")
     parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
-    parser.add_argument("--output_dir", type=str, default="../output",
-                        help="Base directory for output files (default: ../output)")
+    parser.add_argument("--output_dir", type=str, default="./output",
+                        help="Base directory for output files (default: ./output)")
     parser.add_argument("--undistort", action="store_true",
                         help="Apply undistortion and perspective rectification in the end (default: False)")
     
@@ -847,7 +847,7 @@ def main():
     input_dir, input_name = os.path.split(image_path)
     base_name, ext = os.path.splitext(input_name)
     
-    timestamp = datetime.datetime.now().strftime("%y%m%d_%H%M%S")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir_name = f"{timestamp}_{base_name}"
     
     # Resolve the final output directory path
