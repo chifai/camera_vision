@@ -365,8 +365,16 @@ class CameraCalibration:
             ], dtype=np.float64)
             self.dist_coeffs = np.zeros(5, dtype=np.float64)
             
-            # Solve Pose
-            success, rvec_solved, tvec_solved = cv2.solvePnP(obj_points, img_points, self.K.astype(np.float32), self.dist_coeffs.astype(np.float32))
+            # Solve Pose using estimatePoseCharucoBoard
+            success, rvec_solved, tvec_solved = cv2.aruco.estimatePoseCharucoBoard(
+                self.charuco_corners,
+                self.charuco_ids,
+                self.board,
+                self.K.astype(np.float32),
+                self.dist_coeffs.astype(np.float32),
+                None,
+                None
+            )
             if success:
                 self.rvec = rvec_solved.astype(np.float64)
                 self.tvec = tvec_solved.astype(np.float64)
@@ -405,7 +413,7 @@ class CameraCalibration:
                     print(f"Warning: Failed to solve lens distortion coefficients: {e}")
                     self.dist_coeffs = np.zeros(5, dtype=np.float64) # reset to zero if failed
             else:
-                print("Pose estimation (solvePnP) failed.")
+                print("Pose estimation (estimatePoseCharucoBoard) failed.")
                 return False
         else:
             print("Not enough corners for pose estimation (need >= 4).")
