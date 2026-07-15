@@ -582,6 +582,55 @@ class CameraCalibration:
             
         return {cid: (pt[0], pt[1]) for cid, pt in zip(self.charuco_ids.flatten(), pts_mm)}
 
+    def calculate_row_col_ratios(self):
+        """
+        Calculates the X-mm/pixel ratio for each row and the Y-mm/pixel ratio for each column.
+        Returns two dictionaries: row_ratios (row_idx -> float) and col_ratios (col_idx -> float).
+        """
+        if self.charuco_corners is None or self.charuco_ids is None:
+            return {}, {}
+            
+        pts_px_map = {cid: tuple(pt) for cid, pt in zip(self.charuco_ids.flatten(), self.charuco_corners.reshape(-1, 2))}
+        
+        cols = self.squares_x - 1
+        rows = self.squares_y - 1
+        
+        row_ratios = {}
+        col_ratios = {}
+        
+        # Calculate X-mm/pixel ratio for each row
+        for r in range(rows):
+            ratios_in_row = []
+            for c in range(cols - 1):
+                cid1 = r * cols + c
+                cid2 = r * cols + (c + 1)
+                if cid1 in pts_px_map and cid2 in pts_px_map:
+                    p1 = np.array(pts_px_map[cid1])
+                    p2 = np.array(pts_px_map[cid2])
+                    d_px = np.linalg.norm(p1 - p2)
+                    if d_px > 0:
+                        # ratio is physical mm (square_length) / pixel distance
+                        ratios_in_row.append(self.square_length / d_px)
+            if ratios_in_row:
+                row_ratios[r] = float(np.mean(ratios_in_row))
+                
+        # Calculate Y-mm/pixel ratio for each column
+        for c in range(cols):
+            ratios_in_col = []
+            for r in range(rows - 1):
+                cid1 = r * cols + c
+                cid2 = (r + 1) * cols + c
+                if cid1 in pts_px_map and cid2 in pts_px_map:
+                    p1 = np.array(pts_px_map[cid1])
+                    p2 = np.array(pts_px_map[cid2])
+                    d_px = np.linalg.norm(p1 - p2)
+                    if d_px > 0:
+                        ratios_in_col.append(self.square_length / d_px)
+            if ratios_in_col:
+                col_ratios[c] = float(np.mean(ratios_in_col))
+                
+        return row_ratios, col_ratios
+
     def get_corners_distance_plot(self):
         """
         Plots all detected corners with a red dot of 10 pixels radius.
@@ -677,6 +726,47 @@ class CameraCalibration:
                     cv2.rectangle(plot_img, bg_pt1, bg_pt2, (0, 0, 0), -1)
                     cv2.putText(plot_img, text, (mid[0] - tw // 2, mid[1] + th // 2), font, scale, COLOR_YELLOW, thick, cv2.LINE_AA)
                     
+        # Calculate row and column ratios
+        row_ratios, col_ratios = self.calculate_row_col_ratios()
+        
+        # 3. Display row ratios on the plot (left of the leftmost corner of each row)
+        for r, ratio in row_ratios.items():
+            row_cids = [r * cols + c for c in range(cols) if (r * cols + c) in pts_px_map]
+            if row_cids:
+                leftmost_cid = min(row_cids, key=lambda cid: pts_px_map[cid][0])
+                pt = pts_px_map[leftmost_cid]
+                
+                text = f"R{r}: {ratio:.5f} mm/px"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 0.55
+                thick = 2
+                (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
+                
+                tx = max(10, int(round(pt[0])) - tw - 25)
+                ty = int(round(pt[1])) + th // 2
+                
+                cv2.rectangle(plot_img, (tx - 4, ty - th - 4), (tx + tw + 4, ty + 4), (0, 0, 0), -1)
+                cv2.putText(plot_img, text, (tx, ty), font, scale, COLOR_GREEN, thick, cv2.LINE_AA)
+                
+        # 4. Display column ratios on the plot (above the top-most corner of each column)
+        for c, ratio in col_ratios.items():
+            col_cids = [r * cols + c for r in range(rows) if (r * cols + c) in pts_px_map]
+            if col_cids:
+                topmost_cid = min(col_cids, key=lambda cid: pts_px_map[cid][1])
+                pt = pts_px_map[topmost_cid]
+                
+                text = f"C{c}: {ratio:.5f} mm/px"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 0.55
+                thick = 2
+                (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
+                
+                tx = int(round(pt[0])) - tw // 2
+                ty = max(th + 10, int(round(pt[1])) - 25)
+                
+                cv2.rectangle(plot_img, (tx - 4, ty - th - 4), (tx + tw + 4, ty + 4), (0, 0, 0), -1)
+                cv2.putText(plot_img, text, (tx, ty), font, scale, COLOR_GREEN, thick, cv2.LINE_AA)
+                
         return plot_img
 
     @classmethod
@@ -1053,6 +1143,9 @@ def main():
         print(f"Saved rectified image:   '{path_rectified}'")
         print(f"Saved comparison image:  '{path_comparison}'")
         
+    # Calculate row and column ratios
+    row_ratios, col_ratios = calib.calculate_row_col_ratios()
+
     # Output results in json format to the folder
     results_data = {
         "timestamp": timestamp,
@@ -1063,6 +1156,8 @@ def main():
         "marker_length": args.marker_length,
         "detected_markers": len(calib.marker_ids) if calib.marker_ids is not None else 0,
         "detected_corners": len(calib.charuco_corners) if calib.charuco_corners is not None else 0,
+        "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in row_ratios.items()},
+        "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in col_ratios.items()}
     }
     
     if calib.mm_per_px_h is not None:
