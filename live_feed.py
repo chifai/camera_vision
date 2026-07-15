@@ -20,33 +20,11 @@ import cv2
 import numpy as np
 from detect_charuco import CameraCalibration
 
-def scan_camera_indices(max_to_test=8):
-    """Scans for connected video devices and returns a list of valid device indices."""
-    print("\nScanning for connected camera devices...")
-    valid_indices = []
-    for index in range(max_to_test):
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY)
-        if cap.isOpened():
-            # Grab a frame to verify it's working
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                print(f"  -> Index {index}: OPENED SUCCESSFULLY (Resolution: {w}x{h} px)")
-                valid_indices.append(index)
-            else:
-                print(f"  -> Index {index}: Detected, but failed to retrieve frame.")
-            cap.release()
-    if not valid_indices:
-        print("  -> No active camera devices found. Ensure your USB camera is connected and drivers are installed.")
-    print("-----------------------------------------------------------\n")
-    return valid_indices
-
 def main():
     parser = argparse.ArgumentParser(description="Live USB Camera Feed & Interactive ChArUco Detector")
     parser.add_argument("--index", type=int, default=0, help="Camera device index (default: 0)")
-    parser.add_argument("--width", type=int, default=1280, help="Requested frame width (default: 1280)")
-    parser.add_argument("--height", type=int, default=720, help="Requested frame height (default: 720)")
+    parser.add_argument("--width", type=int, default=2592, help="Requested frame width (default: 2592)")
+    parser.add_argument("--height", type=int, default=1944, help="Requested frame height (default: 1944)")
     
     # Board detection configuration
     parser.add_argument("--squares_x", type=int, default=7, help="Number of board squares in X (default: 7)")
@@ -74,7 +52,7 @@ def main():
         args.marker_length / 1000.0, 
         dictionary
     )
-    detector = CameraCalibration.create_detector(
+    detector, _, _ = CameraCalibration.create_detector(
         board,
         corner_refinement_method=args.corner_refinement_method,
         try_refine_markers=args.try_refine_markers
@@ -85,16 +63,8 @@ def main():
     cap = cv2.VideoCapture(args.index, cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY)
     
     if not cap.isOpened():
-        print(f"\nError: Could not open camera at index {args.index}.", file=sys.stderr)
-        scan_camera_indices()
-        sys.exit(1)
-        
-    # Verify we can read a frame
-    ret, frame = cap.read()
-    if not ret or frame is None:
-        print(f"\nError: Could not read first frame from camera at index {args.index}.", file=sys.stderr)
-        cap.release()
-        scan_camera_indices()
+        print(f"Error: Could not open camera at index {args.index}.", file=sys.stderr)
+        print("Please check connection and verify device index.", file=sys.stderr)
         sys.exit(1)
         
     # Configure resolution
@@ -107,7 +77,7 @@ def main():
     print(f"Camera opened successfully! Resolution: {actual_w}x{actual_h} px")
     
     # Interactive variables
-    detect_mode = False
+    detect_mode = True
     prev_time = time.time()
     
     print("\n-----------------------------------------------------------")
