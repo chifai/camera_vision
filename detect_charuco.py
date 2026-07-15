@@ -522,7 +522,16 @@ class CameraCalibration:
                 
             # Add titles
             annotated_titled = add_title(annotated_img, "Detected & Annotated View")
-            processed_titled = add_title(processed_img_resized, "Undistorted & Rectified View" if rectify else "Undistorted View")
+            is_undistorted = (dist_coeffs is not None and not np.all(dist_coeffs == 0))
+            if rectify and is_undistorted:
+                processed_title = "Undistorted & Rectified View"
+            elif rectify:
+                processed_title = "Rectified View"
+            elif is_undistorted:
+                processed_title = "Undistorted View"
+            else:
+                processed_title = "Original View"
+            processed_titled = add_title(processed_img_resized, processed_title)
             
             # Stack side-by-side
             comparison_img = np.hstack((annotated_titled, processed_titled))
@@ -701,6 +710,8 @@ def main():
                         help="Adaptive threshold window size max (default: None/OpenCV default)")
     parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
+    parser.add_argument("--undistort", action="store_true",
+                        help="Apply undistortion and perspective rectification in the end (default: False)")
     
     args = parser.parse_args()
 
@@ -827,36 +838,54 @@ def main():
         corner_text_thickness=args.corner_text_thickness
     )
 
-    # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
-    undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs, crop=args.crop)
-    undist_rectified_img, comparison_img = calib.undistort(
-        rectify=True, 
-        rvec=calib.rvec, 
-        dist_coeffs=calib.dist_coeffs, 
-        return_comparison=True,
-        crop=args.crop
-    )
-
-    # 4. Save All Outputs
+    # 4. Save Outputs
     input_dir, input_name = os.path.split(image_path)
     base_name, ext = os.path.splitext(input_name)
     
     out_dir = "processed" if os.path.isdir("processed") else input_dir
     
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
-    path_undist = os.path.join(out_dir, f"{base_name}_undistorted{'_cropped' if args.crop else ''}{ext}")
-    path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{'_cropped' if args.crop else ''}{ext}")
-    path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
-    
     cv2.imwrite(path_detected, annotated_img)
-    cv2.imwrite(path_undist, undist_only_img)
-    cv2.imwrite(path_rectified, undist_rectified_img)
-    cv2.imwrite(path_comparison, comparison_img)
-    
     print(f"\nSaved annotated image: '{path_detected}'")
-    print(f"Saved undistorted image: '{path_undist}'")
-    print(f"Saved rectified image:   '{path_rectified}'")
-    print(f"Saved comparison image:  '{path_comparison}'")
+    
+    if args.undistort:
+        # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
+        undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs, crop=args.crop)
+        undist_rectified_img, comparison_img = calib.undistort(
+            rectify=True, 
+            rvec=calib.rvec, 
+            dist_coeffs=calib.dist_coeffs, 
+            return_comparison=True,
+            crop=args.crop
+        )
+        
+        path_undist = os.path.join(out_dir, f"{base_name}_undistorted{'_cropped' if args.crop else ''}{ext}")
+        path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{'_cropped' if args.crop else ''}{ext}")
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
+        
+        cv2.imwrite(path_undist, undist_only_img)
+        cv2.imwrite(path_rectified, undist_rectified_img)
+        cv2.imwrite(path_comparison, comparison_img)
+        
+        print(f"Saved undistorted image: '{path_undist}'")
+        print(f"Saved rectified image:   '{path_rectified}'")
+        print(f"Saved comparison image:  '{path_comparison}'")
+    else:
+        # Apply perspective rectification without correcting lens distortion (returns rectified + side-by-side comparison)
+        rectified_only_img, comparison_img = calib.undistort(
+            rectify=True, 
+            rvec=calib.rvec, 
+            dist_coeffs=None, 
+            return_comparison=True,
+            crop=args.crop
+        )
+        path_rectified = os.path.join(out_dir, f"{base_name}_rectified{'_cropped' if args.crop else ''}{ext}")
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
+        cv2.imwrite(path_rectified, rectified_only_img)
+        cv2.imwrite(path_comparison, comparison_img)
+        print(f"Saved rectified image:   '{path_rectified}'")
+        print(f"Saved comparison image:  '{path_comparison}'")
+        
     print("Combined Pipeline executed successfully!")
 
 if __name__ == "__main__":
