@@ -6,7 +6,9 @@ from detect_charuco import CameraCalibration
 class TestCharucoDetection(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.image_path = os.path.join("raw", "leftCameraBuffer.png")
+        # Resolve image path relative to this test script
+        test_dir = os.path.dirname(os.path.abspath(__file__))
+        cls.image_path = os.path.join(test_dir, "data", "leftCameraBuffer.png")
         if not os.path.exists(cls.image_path):
             raise FileNotFoundError(f"Test image not found at '{cls.image_path}'")
             
