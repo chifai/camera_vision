@@ -58,17 +58,20 @@ class TestRectifyFolder(unittest.TestCase):
         subfolder_path = os.path.join(self.temp_dir, "test_subfolder")
         self.assertTrue(os.path.exists(subfolder_path), "Output subfolder was not created")
         
+        orig_annotated_path = os.path.join(subfolder_path, "leftCameraBuffer_annotated.png")
         raw_rectified_path = os.path.join(subfolder_path, "leftCameraBuffer_rectified.png")
         annotated_path = os.path.join(subfolder_path, "leftCameraBuffer_rectified_annotated.png")
         results_json_path = os.path.join(subfolder_path, "leftCameraBuffer_results.json")
         corners_csv_path = os.path.join(subfolder_path, "leftCameraBuffer_corners.csv")
         
+        self.assertTrue(os.path.exists(orig_annotated_path), "Original annotated image was not created")
         self.assertTrue(os.path.exists(raw_rectified_path), "Raw rectified image was not created")
         self.assertTrue(os.path.exists(annotated_path), "Annotated image was not created")
         self.assertTrue(os.path.exists(results_json_path), "Results JSON was not created")
         self.assertTrue(os.path.exists(corners_csv_path), "Corners CSV was not created")
         
         # Ensure we can read the generated images
+        self.assertIsNotNone(cv2.imread(orig_annotated_path))
         self.assertIsNotNone(cv2.imread(raw_rectified_path))
         self.assertIsNotNone(cv2.imread(annotated_path))
 

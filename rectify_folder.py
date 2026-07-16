@@ -119,6 +119,11 @@ def main():
                 print(f"  Skipping: ChArUco detection or pose estimation failed on raw image.")
                 continue
                 
+            # Save original annotated image (before rectification)
+            orig_annotated_path = os.path.join(output_subfolder, f"{base_name}_annotated{ext}")
+            cv2.imwrite(orig_annotated_path, calib.get_annotated_image())
+            print(f"  Saved original annotated image: '{orig_annotated_path}'")
+                
             # Perform rectification and undistortion
             rectified_img = calib.undistort(
                 rectify=True,
