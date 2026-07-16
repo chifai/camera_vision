@@ -30,8 +30,8 @@ LINE_WIDTH_DEFAULT = 2
 COLOR_YELLOW = (0, 255, 255)
 COLOR_GREEN = (0, 255, 0)
 COLOR_RED = (0, 0, 255)
-COLOR_TEXT = (0, 0, 0)
-COLOR_TITLE = (0, 0, 0)
+COLOR_TEXT = COLOR_YELLOW
+COLOR_TITLE = COLOR_GREEN
 
 # Canonical mapping of dictionary name strings to OpenCV ArUco constant IDs.
 # Importable by other scripts so the definition lives in exactly one place.
