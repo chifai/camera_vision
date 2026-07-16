@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch Undistort Images (Standalone & Cropped)
+Batch Undistort & Rectify Images (Standalone & Cropped)
 
-This script loads solved camera calibration parameters (K and distortion coefficients)
-from a directory's `calibration_results.json` file and applies them to all raw images
-in that folder using the CameraCalibration.undistort class method, saving standalone 
-undistorted images with black-boundary cropping (crop=True) by default.
+This script loads solved camera calibration parameters (K, distortion coefficients,
+and image-specific rotation vectors) from a directory's `calibration_results.json` 
+file and applies distortion correction and perspective rectification to all raw 
+images in that folder using the CameraCalibration.undistort class method.
 """
 
 import os
@@ -29,9 +29,19 @@ def batch_undistort(folder_path, args):
         
         K = np.array(calib_data['K'], dtype=np.float64)
         dist_coeffs = np.array(calib_data['dist_coeffs'], dtype=np.float64)
+        image_paths = calib_data.get('image_paths', [])
+        rvecs = calib_data.get('rvecs', [])
+        
         print("Loaded calibration parameters successfully.")
         print(f"Camera Matrix K:\n{K}")
         print(f"Distortion Coefficients:\n{dist_coeffs}")
+        
+        # Build rvec lookup map matching image basenames to their rotation vectors
+        rvec_lookup = {}
+        for path, rvec in zip(image_paths, rvecs):
+            rvec_lookup[os.path.basename(path)] = np.array(rvec, dtype=np.float64)
+        print(f"Mapped rotation vectors for {len(rvec_lookup)} views.")
+        
     except Exception as e:
         print(f"Error parsing calibration JSON file: {e}", file=sys.stderr)
         sys.exit(1)
@@ -53,7 +63,7 @@ def batch_undistort(folder_path, args):
         
     print(f"Found {len(images_to_process)} raw images to process.")
     
-    # 3. Apply undistort to all images using CameraCalibration class
+    # 3. Apply undistort and optional rectification to all images
     crop_enabled = not args.no_crop
     print(f"Cropping boundary pixels (crop=True): {crop_enabled}")
     
@@ -75,8 +85,12 @@ def batch_undistort(folder_path, args):
             print(f"  Warning: Failed to load image '{f}' in CameraCalibration: {e}. Skipping.")
             continue
             
+        # Get matching rotation vector for perspective rectification
+        rvec = rvec_lookup.get(f)
+        rectify_enabled = rvec is not None
+        
         # Re-use CameraCalibration.undistort method
-        undistorted = calib.undistort(rectify=False, dist_coeffs=dist_coeffs, crop=crop_enabled)
+        undistorted = calib.undistort(rectify=rectify_enabled, rvec=rvec, dist_coeffs=dist_coeffs, crop=crop_enabled)
         
         # Construct output file name
         base_name, ext = os.path.splitext(f)
@@ -84,12 +98,15 @@ def batch_undistort(folder_path, args):
         out_path = os.path.join(folder_path, out_name)
         
         cv2.imwrite(out_path, undistorted)
-        print(f"  Saved standalone undistorted image: '{out_name}'")
+        if rectify_enabled:
+            print(f"  Saved standalone undistorted & rectified image: '{out_name}'")
+        else:
+            print(f"  Saved standalone undistorted image (no pose for rectification): '{out_name}'")
         
-    print("\nBatch undistortion completed successfully!")
+    print("\nBatch undistortion and rectification completed successfully!")
 
 def main():
-    parser = argparse.ArgumentParser(description="Batch undistort images and output standalone undistorted results")
+    parser = argparse.ArgumentParser(description="Batch undistort and rectify images from calibration results")
     parser.add_argument("folder_path", type=str, help="Path to folder containing calibration_results.json and raw images")
     parser.add_argument("--squares_x", type=int, default=7, help="Number of board squares in X (default: 7)")
     parser.add_argument("--squares_y", type=int, default=5, help="Number of board squares in Y (default: 5)")
