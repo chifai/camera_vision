@@ -1000,6 +1000,7 @@ def main():
                 'reproj_error': float(results['reproj_error']),
                 'K': results['K'].tolist(),
                 'dist_coeffs': results['dist_coeffs'].flatten().tolist(),
+                'rvecs': [r.flatten().tolist() for r in results['rvecs']],
                 'image_size': results['image_size'],
                 'image_paths': [os.path.basename(p) for p in results['image_paths']]
             }
