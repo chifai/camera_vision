@@ -179,6 +179,12 @@ def main():
                     thickness=2
                 )
                 
+                # Save raw unannotated rectified image
+                raw_rectified_path = os.path.join(output_subfolder, f"{base_name}_rectified{ext}")
+                cv2.imwrite(raw_rectified_path, rectified_img)
+                print(f"  Saved raw rectified image: '{raw_rectified_path}'")
+                
+                # Save annotated rectified image
                 out_path = os.path.join(output_subfolder, f"{base_name}_rectified_annotated{ext}")
                 cv2.imwrite(out_path, annotated)
                 print(f"  Saved annotated rectified image: '{out_path}'")
