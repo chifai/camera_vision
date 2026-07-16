@@ -109,16 +109,15 @@ def main():
             # Run ChArUco detection overlay if enabled
             if detect_mode:
                 corners, ids, marker_corners, marker_ids = detector.detectBoard(display_frame)
-                
-                # Draw marker borders
+
+                # Draw marker borders using public static method
                 if marker_ids is not None:
-                    # Access mangled private drawing functions from CameraCalibration class
-                    CameraCalibration._CameraCalibration__draw_detected_markers_custom(
+                    CameraCalibration.draw_detected_markers(
                         display_frame, marker_corners, marker_ids, line_thickness=2, font_scale=0.6, text_thickness=1
                     )
-                # Draw subpixel corners
+                # Draw subpixel corners using public static method
                 if corners is not None and ids is not None:
-                    CameraCalibration._CameraCalibration__draw_detected_corners_charuco_custom(
+                    CameraCalibration.draw_detected_corners(
                         display_frame, corners, ids, corner_radius=6, line_thickness=1, font_scale=0.5, text_thickness=1
                     )
                     

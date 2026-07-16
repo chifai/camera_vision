@@ -23,41 +23,6 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R_scipy
 from detect_charuco import CameraCalibration
 
-def overlay_pose_info(img, rvec, mm_per_px_h=None, mm_per_px_v=None):
-    """
-    Overlays RPY angles and mm/pixel scale onto the top-left corner of the image.
-    rvec is a 3-element array in Rodrigues format.
-    """
-    R, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
-    r_obj = R_scipy.from_matrix(R)
-    euler = r_obj.as_euler('xyz', degrees=True)
-    pitch, yaw, roll = euler[0], euler[1], euler[2]
-
-    lines = [
-        f"Roll:  {roll:+.3f} deg",
-        f"Pitch: {pitch:+.3f} deg",
-        f"Yaw:   {yaw:+.3f} deg",
-    ]
-    if mm_per_px_h is not None:
-        lines.append(f"H scale: {mm_per_px_h:.5f} mm/px")
-    if mm_per_px_v is not None:
-        lines.append(f"V scale: {mm_per_px_v:.5f} mm/px")
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.75
-    thickness = 2
-    line_height = 32
-    x0, y0 = 20, 40
-
-    # Draw background box
-    max_tw = max(cv2.getTextSize(l, font, font_scale, thickness)[0][0] for l in lines)
-    box_h = line_height * len(lines) + 10
-    cv2.rectangle(img, (x0 - 6, y0 - 28), (x0 + max_tw + 10, y0 + box_h - 14), (0, 0, 0), -1)
-
-    for i, line in enumerate(lines):
-        y = y0 + i * line_height
-        cv2.putText(img, line, (x0, y), font, font_scale, (0, 255, 255), thickness, cv2.LINE_AA)
-
 
 def batch_undistort(folder_path, args):
     # 1. Load calibration_results.json
@@ -167,13 +132,21 @@ def batch_undistort(folder_path, args):
             # get_corners_distance_plot() draws corners, lines, mm distances and row/col ratios
             annotated = calib2.get_corners_distance_plot()
 
-            # Overlay RPY and mm/pixel info from the original calibration rvec
+            # Overlay RPY and mm/pixel using CameraCalibration.overlay_text_info
             if rvec is not None:
-                overlay_pose_info(
-                    annotated,
-                    rvec,
+                h_img, w_img = annotated.shape[:2]
+                num_markers = len(calib2.marker_ids) if calib2.marker_ids is not None else 0
+                num_corners = len(calib2.charuco_corners) if calib2.charuco_corners is not None else 0
+                CameraCalibration.overlay_text_info(
+                    annotated, w_img, h_img, num_markers, num_corners,
                     mm_per_px_h=calib2.mm_per_px_h,
-                    mm_per_px_v=calib2.mm_per_px_v
+                    mm_per_px_v=calib2.mm_per_px_v,
+                    px_per_mm_h=calib2.px_per_mm_h,
+                    px_per_mm_v=calib2.px_per_mm_v,
+                    euler_xyz=calib2.euler_xyz,
+                    pose_depth=calib2.pose_depth,
+                    font_scale=0.75,
+                    thickness=2
                 )
 
             plot_name = f"{base_name}_undistorted_corners_plot{ext}"

@@ -16,6 +16,9 @@ Date: July 3, 2026
 import os
 import sys
 import argparse
+import csv
+import datetime
+import json
 import math
 import cv2
 import numpy as np
@@ -30,11 +33,36 @@ COLOR_RED = (0, 0, 255)
 COLOR_TEXT = (0, 0, 0)
 COLOR_TITLE = (0, 0, 0)
 
+# Canonical mapping of dictionary name strings to OpenCV ArUco constant IDs.
+# Importable by other scripts so the definition lives in exactly one place.
+DICT_MAPPING = {
+    'DICT_4X4_50':    cv2.aruco.DICT_4X4_50,
+    'DICT_4X4_100':   cv2.aruco.DICT_4X4_100,
+    'DICT_4X4_250':   cv2.aruco.DICT_4X4_250,
+    'DICT_4X4_1000':  cv2.aruco.DICT_4X4_1000,
+    'DICT_5X5_50':    cv2.aruco.DICT_5X5_50,
+    'DICT_5X5_100':   cv2.aruco.DICT_5X5_100,
+    'DICT_5X5_250':   cv2.aruco.DICT_5X5_250,
+    'DICT_5X5_1000':  cv2.aruco.DICT_5X5_1000,
+    'DICT_6X6_50':    cv2.aruco.DICT_6X6_50,
+    'DICT_6X6_100':   cv2.aruco.DICT_6X6_100,
+    'DICT_6X6_250':   cv2.aruco.DICT_6X6_250,
+    'DICT_6X6_1000':  cv2.aruco.DICT_6X6_1000,
+    'DICT_7X7_50':    cv2.aruco.DICT_7X7_50,
+    'DICT_7X7_100':   cv2.aruco.DICT_7X7_100,
+    'DICT_7X7_250':   cv2.aruco.DICT_7X7_250,
+    'DICT_7X7_1000':  cv2.aruco.DICT_7X7_1000,
+}
+
 class CameraCalibration:
     """Combines board detection, pose/distortion solving, and image undistortion."""
 
+    # ------------------------------------------------------------------
+    # Public drawing helpers (usable by external callers directly)
+    # ------------------------------------------------------------------
+
     @staticmethod
-    def __draw_detected_markers_custom(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
+    def draw_detected_markers(image, corners, ids, line_thickness=5, font_scale=1.5, text_thickness=3):
         """Draws detected ArUco markers with custom line width and larger, highly visible font."""
         if ids is None or corners is None:
             return
@@ -43,46 +71,41 @@ class CameraCalibration:
             # Draw the 4 border lines of the marker
             for j in range(4):
                 cv2.line(image, tuple(pts[j]), tuple(pts[(j + 1) % 4]), COLOR_GREEN, line_thickness)
-            
             # Draw a small red circle on the first corner (top-left by convention)
             cv2.circle(image, tuple(pts[0]), line_thickness + 2, COLOR_RED, -1)
-            
             # Write marker ID text with a black outline for high contrast/legibility
             text = f"id={marker_id[0]}"
             text_org = (int(pts[0][0]) - 15, int(pts[0][1]) - 15)
-            # Black outline
             cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
-            # Green text
             cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_GREEN, text_thickness, cv2.LINE_AA)
 
+    # Backward-compatible alias (name-mangled form used by live_feed.py)
+    _CameraCalibration__draw_detected_markers_custom = draw_detected_markers.__func__
+
     @staticmethod
-    def __draw_detected_corners_charuco_custom(image, corners, ids, corner_radius=10, line_thickness=3, font_scale=1.2, text_thickness=2):
-        """Draws detected Charuco chessboard corners with custom sizes and custom text labels."""
+    def draw_detected_corners(image, corners, ids, corner_radius=10, line_thickness=3, font_scale=1.2, text_thickness=2):
+        """Draws detected Charuco chessboard corners with crosshair targets and ID labels."""
         if ids is None or corners is None:
             return
         for i, corner_id in enumerate(ids):
             pt = tuple(corners[i][0].astype(np.int32))
             cid_val = corner_id[0]
-            
-            # Draw a custom target crosshair
-            # Red outer ring
+            # Red outer ring + inner dot + crosshair
             cv2.circle(image, pt, corner_radius, COLOR_RED, line_thickness, cv2.LINE_AA)
-            # Inner dot
             cv2.circle(image, pt, 2, COLOR_RED, -1, cv2.LINE_AA)
-            # Crosshair lines
             cv2.line(image, (pt[0] - corner_radius - 4, pt[1]), (pt[0] + corner_radius + 4, pt[1]), COLOR_RED, line_thickness)
             cv2.line(image, (pt[0], pt[1] - corner_radius - 4), (pt[0], pt[1] + corner_radius + 4), COLOR_RED, line_thickness)
-            
-            # Write corner ID text with a black outline for contrast
+            # Yellow corner ID label with black outline
             text = str(cid_val)
             text_org = (pt[0] + corner_radius + 6, pt[1] - corner_radius - 2)
-            # Black outline
             cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
-            # Yellow text
             cv2.putText(image, text, text_org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_YELLOW, text_thickness, cv2.LINE_AA)
 
+    # Backward-compatible alias
+    _CameraCalibration__draw_detected_corners_charuco_custom = draw_detected_corners.__func__
+
     @staticmethod
-    def __overlay_text_info(
+    def overlay_text_info(
         image, w, h, num_markers, num_corners,
         mm_per_px_h=None, mm_per_px_v=None, px_per_mm_h=None, px_per_mm_v=None,
         pose_depth=None, euler_xyz=None, collin_max=None, reproj_mean=None,
@@ -93,22 +116,17 @@ class CameraCalibration:
         y_offset = 40
         line_height = 35
         font = cv2.FONT_HERSHEY_SIMPLEX
-        
         cv2.putText(image, "Charuco Board Analysis", (30, y_offset), font, 1.1, COLOR_TITLE, 3)
         y_offset += 45
-        
         cv2.putText(image, f"Resolution: {w}x{h} px", (30, y_offset), font, font_scale, color, thickness)
         y_offset += line_height
-        
         cv2.putText(image, f"Markers: {num_markers} | Corners: {num_corners}", (30, y_offset), font, font_scale, color, thickness)
         y_offset += line_height
-        
         if mm_per_px_h is not None and mm_per_px_v is not None:
             cv2.putText(image, f"Scale (X): {mm_per_px_h:.5f} mm/px ({px_per_mm_h:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
             cv2.putText(image, f"Scale (Y): {mm_per_px_v:.5f} mm/px ({px_per_mm_v:.1f} px/mm)", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
-            
         if euler_xyz is not None:
             cv2.putText(image, f"Pose Z (depth): {pose_depth:.1f} mm", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
@@ -118,14 +136,12 @@ class CameraCalibration:
             y_offset += line_height
             cv2.putText(image, f"Yaw (Y-rot):   {euler_xyz[1]:+.2f} deg", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
-            
         if collin_max is not None:
             cv2.putText(image, f"Max Line Distort: {collin_max:.2f} px", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
         if reproj_mean is not None:
             cv2.putText(image, f"Mean Reproj Error: {reproj_mean:.2f} px", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
-            
         if solved_dist_coeffs is not None:
             cv2.putText(image, f"k1 (radial 1): {solved_dist_coeffs[0]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
@@ -136,6 +152,9 @@ class CameraCalibration:
             cv2.putText(image, f"p1 (tang 2):   {solved_dist_coeffs[3]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
             y_offset += line_height
             cv2.putText(image, f"k3 (radial 3):   {solved_dist_coeffs[4]:+.3e}", (30, y_offset), font, font_scale, color, thickness)
+
+    # Backward-compatible alias
+    _CameraCalibration__overlay_text_info = overlay_text_info.__func__
 
     @staticmethod
     def create_detector(board, corner_refinement_method="subpix", corner_refinement_win_size=5, try_refine_markers=False,
@@ -421,35 +440,37 @@ class CameraCalibration:
 
         return True
 
-    def get_annotated_image(self, marker_line_width=5, marker_font_size=1.5, marker_text_thickness=3, 
+    def get_annotated_image(self, marker_line_width=5, marker_font_size=1.5, marker_text_thickness=3,
                             corner_radius=10, corner_line_width=3, corner_font_size=1.2, corner_text_thickness=2):
         """Generates and returns the annotated image with all overlays and text info."""
         annotated_img = self.img.copy()
         if self.marker_ids is not None:
-            self.__draw_detected_markers_custom(
-                annotated_img, 
-                self.marker_corners, 
-                self.marker_ids, 
-                line_thickness=marker_line_width, 
-                font_scale=marker_font_size, 
+            self.draw_detected_markers(
+                annotated_img,
+                self.marker_corners,
+                self.marker_ids,
+                line_thickness=marker_line_width,
+                font_scale=marker_font_size,
                 text_thickness=marker_text_thickness
             )
         if self.charuco_corners is not None:
-            self.__draw_detected_corners_charuco_custom(
-                annotated_img, 
-                self.charuco_corners, 
-                self.charuco_ids, 
-                corner_radius=corner_radius, 
-                line_thickness=corner_line_width, 
-                font_scale=corner_font_size, 
+            self.draw_detected_corners(
+                annotated_img,
+                self.charuco_corners,
+                self.charuco_ids,
+                corner_radius=corner_radius,
+                line_thickness=corner_line_width,
+                font_scale=corner_font_size,
                 text_thickness=corner_text_thickness
             )
         if self.rvec is not None:
-            cv2.drawFrameAxes(annotated_img, self.K.astype(np.float32), np.zeros(5, dtype=np.float32), self.rvec.astype(np.float32), self.tvec.astype(np.float32), length=self.square_length * 2.0, thickness=3)
-
-        # Apply Text Overlay to detected image
-        self.__overlay_text_info(
-            annotated_img, self.w, self.h, len(self.marker_ids) if self.marker_ids is not None else 0, len(self.charuco_corners) if self.charuco_corners is not None else 0,
+            cv2.drawFrameAxes(annotated_img, self.K.astype(np.float32), np.zeros(5, dtype=np.float32),
+                              self.rvec.astype(np.float32), self.tvec.astype(np.float32),
+                              length=self.square_length * 2.0, thickness=3)
+        self.overlay_text_info(
+            annotated_img, self.w, self.h,
+            len(self.marker_ids) if self.marker_ids is not None else 0,
+            len(self.charuco_corners) if self.charuco_corners is not None else 0,
             mm_per_px_h=self.mm_per_px_h, mm_per_px_v=self.mm_per_px_v,
             px_per_mm_h=self.px_per_mm_h, px_per_mm_v=self.px_per_mm_v,
             pose_depth=self.pose_depth, euler_xyz=self.euler_xyz,
@@ -458,6 +479,127 @@ class CameraCalibration:
             font_scale=0.9, thickness=2
         )
         return annotated_img
+
+    # ------------------------------------------------------------------
+    # Results serialisation helpers
+    # ------------------------------------------------------------------
+
+    def to_results_dict(self, image_path=None, squares_x=None, squares_y=None,
+                        square_length=None, marker_length=None, timestamp=None):
+        """
+        Builds a JSON-serialisable dictionary of all computed metrics for this
+        detection run.  Pass the optional keyword arguments to include board
+        configuration metadata in the dict.
+        """
+        timestamp = timestamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_ratios, col_ratios = self.calculate_row_col_ratios()
+        data = {
+            "timestamp": timestamp,
+            "image_path": os.path.abspath(image_path or self.image_path),
+            "squares_x": squares_x if squares_x is not None else self.squares_x,
+            "squares_y": squares_y if squares_y is not None else self.squares_y,
+            "square_length": square_length if square_length is not None else self.square_length,
+            "marker_length": marker_length if marker_length is not None else self.marker_length,
+            "detected_markers": len(self.marker_ids) if self.marker_ids is not None else 0,
+            "detected_corners": len(self.charuco_corners) if self.charuco_corners is not None else 0,
+            "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in row_ratios.items()},
+            "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in col_ratios.items()},
+        }
+        if self.mm_per_px_h is not None:
+            data.update({
+                "mm_per_px_h": float(self.mm_per_px_h),
+                "mm_per_px_v": float(self.mm_per_px_v),
+                "px_per_mm_h": float(self.px_per_mm_h),
+                "px_per_mm_v": float(self.px_per_mm_v),
+            })
+        if self.collin_max is not None:
+            data.update({
+                "collinear_deviation_max_px": float(self.collin_max),
+                "collinear_deviation_rms_px": float(self.collin_rms),
+            })
+        if self.reproj_mean is not None:
+            data.update({
+                "reprojection_error_mean_px": float(self.reproj_mean),
+                "reprojection_error_max_px": float(self.reproj_max),
+            })
+        if self.K is not None:
+            data.update({
+                "K": self.K.tolist(),
+                "dist_coeffs": self.dist_coeffs.flatten().tolist() if self.dist_coeffs is not None else [0.0] * 5,
+            })
+        if self.rvec is not None:
+            data.update({
+                "rvec": self.rvec.flatten().tolist(),
+                "tvec": self.tvec.flatten().tolist(),
+                "pose_depth_mm": float(self.pose_depth),
+                "euler_xyz_pitch_yaw_roll_deg": self.euler_xyz.tolist() if self.euler_xyz is not None else None,
+            })
+        return data
+
+    def save_results_json(self, path, **kwargs):
+        """Serialises the detection results to *path* as pretty-printed JSON.
+
+        Any extra keyword arguments are forwarded to `to_results_dict` (e.g.
+        image_path, squares_x, timestamp …).
+        """
+        data = self.to_results_dict(**kwargs)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+        return data
+
+    def save_corners_csv(self, path):
+        """Writes all detected ChArUco corner pixel coordinates to a CSV file.
+
+        Columns: corner_id, x, y
+        Does nothing (and returns False) if no corners are detected.
+        """
+        if self.charuco_corners is None or self.charuco_ids is None:
+            return False
+        with open(path, mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["corner_id", "x", "y"])
+            for i in range(len(self.charuco_ids)):
+                cid = int(self.charuco_ids[i][0])
+                pt = self.charuco_corners[i][0]
+                writer.writerow([cid, float(pt[0]), float(pt[1])])
+        return True
+
+    # ------------------------------------------------------------------
+    # Class-level calibration helpers (multi-image results)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def save_calibration_json(cls, results, path):
+        """Saves the dict returned by `calibrate_from_directory` to *path* as JSON.
+
+        The saved keys mirror what `batch_undistort.py` expects to load:
+        reproj_error, K, dist_coeffs, rvecs, image_size, image_paths.
+        """
+        data = {
+            "reproj_error": float(results["reproj_error"]),
+            "K": results["K"].tolist(),
+            "dist_coeffs": results["dist_coeffs"].flatten().tolist(),
+            "rvecs": [r.flatten().tolist() for r in results["rvecs"]],
+            "image_size": results["image_size"],
+            "image_paths": [os.path.basename(p) for p in results["image_paths"]],
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+        return data
+
+    @classmethod
+    def print_calibration_results(cls, results):
+        """Prints a human-readable summary of the dict from `calibrate_from_directory`."""
+        print("=" * 59)
+        print(" MULTI-IMAGE CALIBRATION RESULTS")
+        print("=" * 59)
+        print(f"Successfully Calibrated Views: {len(results['image_paths'])}")
+        print(f"Reprojection Error (RMS):       {results['reproj_error']:.4f} pixels")
+        print("\nSolved Camera Matrix K:")
+        print(results["K"])
+        print("\nSolved Distortion Coefficients D:")
+        print(f"  k1, k2, p1, p2, k3 = {results['dist_coeffs'].flatten().tolist()}")
+        print("=" * 59)
 
     def undistort(self, image=None, rectify=False, rvec=None, dist_coeffs=None, return_comparison=False, crop=False):
         """
@@ -916,6 +1058,7 @@ class CameraCalibration:
         return True, results
 
 def main():
+    # region parse argument
     parser = argparse.ArgumentParser(description="Object-oriented Charuco Board Detection and Image Undistortion pipeline.")
     parser.add_argument("image_path", type=str, help="Path to the input image.")
     parser.add_argument("--squares_x", type=int, default=7, help="Number of squares along X-axis (default: 5)")
@@ -959,6 +1102,7 @@ def main():
                         help="Apply undistortion and perspective rectification in the end (default: False)")
     
     args = parser.parse_args()
+    # endregion parse argument
 
     # Load Image
     image_path = args.image_path
@@ -983,34 +1127,13 @@ def main():
             adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
         )
         if success:
-            print("\n===========================================================")
-            print(" MULTI-IMAGE CALIBRATION RESULTS")
-            print("===========================================================")
-            print(f"Successfully Calibrated Views: {len(results['image_paths'])}")
-            print(f"Reprojection Error (RMS):       {results['reproj_error']:.4f} pixels")
-            print("\nSolved Camera Matrix K:")
-            print(results['K'])
-            print("\nSolved Distortion Coefficients D:")
-            print(f"  k1, k2, p1, p2, k3 = {results['dist_coeffs'].flatten().tolist()}")
-            
-            # Save results to a json file in the directory
-            import json
+            CameraCalibration.print_calibration_results(results)
             out_file = os.path.join(image_path, "calibration_results.json")
-            data = {
-                'reproj_error': float(results['reproj_error']),
-                'K': results['K'].tolist(),
-                'dist_coeffs': results['dist_coeffs'].flatten().tolist(),
-                'rvecs': [r.flatten().tolist() for r in results['rvecs']],
-                'image_size': results['image_size'],
-                'image_paths': [os.path.basename(p) for p in results['image_paths']]
-            }
-            with open(out_file, 'w') as f:
-                json.dump(data, f, indent=4)
+            CameraCalibration.save_calibration_json(results, out_file)
             print(f"\nSaved calibration results to: '{out_file}'")
-            print("===========================================================")
         else:
             print("\nCalibration failed or not enough valid images.")
-            print("===========================================================")
+            print("=" * 59)
             sys.exit(1)
         sys.exit(0)
 
@@ -1085,13 +1208,10 @@ def main():
     )
 
     # 4. Save Outputs and Results JSON/CSV to timestamped folder in output directory
-    import datetime
-    import json
-    import csv
-    
     input_dir, input_name = os.path.split(image_path)
     base_name, input_ext = os.path.splitext(input_name)
-    
+
+
     # Determine output format/extension
     if args.format:
         ext = f".{args.format.lower()}"
@@ -1099,131 +1219,62 @@ def main():
             ext = ".jpg"
     else:
         ext = input_ext
-        
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir_name = f"{timestamp}_{base_name}"
-    
-    # Resolve the final output directory path
     out_dir = os.path.abspath(os.path.join(args.output_dir, out_dir_name))
     os.makedirs(out_dir, exist_ok=True)
-    
+
     path_detected = os.path.join(out_dir, f"{base_name}_detected{ext}")
     cv2.imwrite(path_detected, annotated_img)
     print(f"\nSaved annotated image: '{path_detected}'")
-    
-    # Generate and save corners distance plot image
+
     corners_plot_img = calib.get_corners_distance_plot()
     path_corners_plot = os.path.join(out_dir, f"{base_name}_corners_plot{ext}")
     cv2.imwrite(path_corners_plot, corners_plot_img)
     print(f"Saved corners plot:      '{path_corners_plot}'")
-    
+
     if args.undistort:
-        # 3. Apply Undistortion and Rectification using Class Methods (returns rectified + side-by-side comparison)
         undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs, crop=args.crop)
         undist_rectified_img, comparison_img = calib.undistort(
-            rectify=True, 
-            rvec=calib.rvec, 
-            dist_coeffs=calib.dist_coeffs, 
-            return_comparison=True,
-            crop=args.crop
+            rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs,
+            return_comparison=True, crop=args.crop
         )
-        
-        path_undist = os.path.join(out_dir, f"{base_name}_undistorted{'_cropped' if args.crop else ''}{ext}")
-        path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{'_cropped' if args.crop else ''}{ext}")
-        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
-        
+        suffix = "_cropped" if args.crop else ""
+        path_undist = os.path.join(out_dir, f"{base_name}_undistorted{suffix}{ext}")
+        path_rectified = os.path.join(out_dir, f"{base_name}_undistorted_rectified{suffix}{ext}")
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{suffix}{ext}")
         cv2.imwrite(path_undist, undist_only_img)
         cv2.imwrite(path_rectified, undist_rectified_img)
         cv2.imwrite(path_comparison, comparison_img)
-        
         print(f"Saved undistorted image: '{path_undist}'")
         print(f"Saved rectified image:   '{path_rectified}'")
         print(f"Saved comparison image:  '{path_comparison}'")
     else:
-        # Apply perspective rectification without correcting lens distortion (returns rectified + side-by-side comparison)
         rectified_only_img, comparison_img = calib.undistort(
-            rectify=True, 
-            rvec=calib.rvec, 
-            dist_coeffs=None, 
-            return_comparison=True,
-            crop=args.crop
+            rectify=True, rvec=calib.rvec, dist_coeffs=None,
+            return_comparison=True, crop=args.crop
         )
-        path_rectified = os.path.join(out_dir, f"{base_name}_rectified{'_cropped' if args.crop else ''}{ext}")
-        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{'_cropped' if args.crop else ''}{ext}")
+        suffix = "_cropped" if args.crop else ""
+        path_rectified = os.path.join(out_dir, f"{base_name}_rectified{suffix}{ext}")
+        path_comparison = os.path.join(out_dir, f"{base_name}_comparison{suffix}{ext}")
         cv2.imwrite(path_rectified, rectified_only_img)
         cv2.imwrite(path_comparison, comparison_img)
         print(f"Saved rectified image:   '{path_rectified}'")
         print(f"Saved comparison image:  '{path_comparison}'")
-        
-    # Calculate row and column ratios
-    row_ratios, col_ratios = calib.calculate_row_col_ratios()
 
-    # Output results in json format to the folder
-    results_data = {
-        "timestamp": timestamp,
-        "image_path": os.path.abspath(image_path),
-        "squares_x": args.squares_x,
-        "squares_y": args.squares_y,
-        "square_length": args.square_length,
-        "marker_length": args.marker_length,
-        "detected_markers": len(calib.marker_ids) if calib.marker_ids is not None else 0,
-        "detected_corners": len(calib.charuco_corners) if calib.charuco_corners is not None else 0,
-        "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in row_ratios.items()},
-        "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in col_ratios.items()}
-    }
-    
-    if calib.mm_per_px_h is not None:
-        results_data.update({
-            "mm_per_px_h": float(calib.mm_per_px_h),
-            "mm_per_px_v": float(calib.mm_per_px_v),
-            "px_per_mm_h": float(calib.px_per_mm_h),
-            "px_per_mm_v": float(calib.px_per_mm_v)
-        })
-        
-    if calib.collin_max is not None:
-        results_data.update({
-            "collinear_deviation_max_px": float(calib.collin_max),
-            "collinear_deviation_rms_px": float(calib.collin_rms)
-        })
-        
-    if calib.reproj_mean is not None:
-        results_data.update({
-            "reprojection_error_mean_px": float(calib.reproj_mean),
-            "reprojection_error_max_px": float(calib.reproj_max)
-        })
-        
-    if calib.K is not None:
-        results_data.update({
-            "K": calib.K.tolist(),
-            "dist_coeffs": calib.dist_coeffs.flatten().tolist() if calib.dist_coeffs is not None else [0.0]*5
-        })
-        
-    if calib.rvec is not None:
-        results_data.update({
-            "rvec": calib.rvec.flatten().tolist(),
-            "tvec": calib.tvec.flatten().tolist(),
-            "pose_depth_mm": float(calib.pose_depth),
-            "euler_xyz_pitch_yaw_roll_deg": calib.euler_xyz.tolist() if calib.euler_xyz is not None else None
-        })
-        
+    # Save results JSON and corners CSV using instance helpers
     json_path = os.path.join(out_dir, f"{base_name}_results.json")
-    with open(json_path, "w") as f:
-        json.dump(results_data, f, indent=4)
+    calib.save_results_json(json_path, image_path=image_path, timestamp=timestamp,
+                            squares_x=args.squares_x, squares_y=args.squares_y,
+                            square_length=args.square_length, marker_length=args.marker_length)
     print(f"Saved results JSON:      '{json_path}'")
-    
-    # Export Charuco corners coordinates into a CSV file in the same folder
-    if calib.charuco_corners is not None and calib.charuco_ids is not None:
-        csv_path = os.path.join(out_dir, f"{base_name}_corners.csv")
-        with open(csv_path, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["corner_id", "x", "y"])
-            for i in range(len(calib.charuco_ids)):
-                cid = int(calib.charuco_ids[i][0])
-                pt = calib.charuco_corners[i][0]
-                writer.writerow([cid, float(pt[0]), float(pt[1])])
+
+    csv_path = os.path.join(out_dir, f"{base_name}_corners.csv")
+    if calib.save_corners_csv(csv_path):
         print(f"Saved corners CSV:       '{csv_path}'")
-        
-    # Run the detection again on the rectified image and save to another subfolder
+
+    # Run detection again on the rectified image and save to a subfolderder
     print(f"\n===========================================================")
     print(f" Starting Second-Pass Detection on Rectified Image")
     print(f"===========================================================")
@@ -1266,71 +1317,24 @@ def main():
         cv2.imwrite(rectified_plot_path, rectified_corners_plot)
         print(f"Saved rectified corners plot:  '{rectified_plot_path}'")
         
-        # 4. Output corners csv
+        # 4. Output corners CSV using instance helper
         rectified_csv_path = os.path.join(rectified_out_dir, f"{rectified_base_name}_corners.csv")
-        with open(rectified_csv_path, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["corner_id", "x", "y"])
-            for i in range(len(rectified_calib.charuco_ids)):
-                cid = int(rectified_calib.charuco_ids[i][0])
-                pt = rectified_calib.charuco_corners[i][0]
-                writer.writerow([cid, float(pt[0]), float(pt[1])])
-        print(f"Saved rectified corners CSV:   '{rectified_csv_path}'")
-        
-        # 5. Output json result
-        rectified_row_ratios, rectified_col_ratios = rectified_calib.calculate_row_col_ratios()
-        rectified_results_data = {
-            "timestamp": timestamp,
-            "image_path": os.path.abspath(path_rectified),
-            "squares_x": args.squares_x,
-            "squares_y": args.squares_y,
-            "square_length": args.square_length,
-            "marker_length": args.marker_length,
-            "detected_markers": len(rectified_calib.marker_ids) if rectified_calib.marker_ids is not None else 0,
-            "detected_corners": len(rectified_calib.charuco_corners) if rectified_calib.charuco_corners is not None else 0,
-            "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in rectified_row_ratios.items()},
-            "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in rectified_col_ratios.items()}
-        }
-        
-        if rectified_calib.mm_per_px_h is not None:
-            rectified_results_data.update({
-                "mm_per_px_h": float(rectified_calib.mm_per_px_h),
-                "mm_per_px_v": float(rectified_calib.mm_per_px_v),
-                "px_per_mm_h": float(rectified_calib.px_per_mm_h),
-                "px_per_mm_v": float(rectified_calib.px_per_mm_v)
-            })
-            
-        if rectified_calib.collin_max is not None:
-            rectified_results_data.update({
-                "collinear_deviation_max_px": float(rectified_calib.collin_max),
-                "collinear_deviation_rms_px": float(rectified_calib.collin_rms)
-            })
-            
-        if rectified_calib.reproj_mean is not None:
-            rectified_results_data.update({
-                "reprojection_error_mean_px": float(rectified_calib.reproj_mean),
-                "reprojection_error_max_px": float(rectified_calib.reproj_max)
-            })
-            
-        if rectified_calib.K is not None:
-            rectified_results_data.update({
-                "K": rectified_calib.K.tolist(),
-                "dist_coeffs": rectified_calib.dist_coeffs.flatten().tolist() if rectified_calib.dist_coeffs is not None else [0.0]*5
-            })
-            
-        if rectified_calib.rvec is not None:
-            rectified_results_data.update({
-                "rvec": rectified_calib.rvec.flatten().tolist(),
-                "tvec": rectified_calib.tvec.flatten().tolist(),
-                "pose_depth_mm": float(rectified_calib.pose_depth),
-                "euler_xyz_pitch_yaw_roll_deg": rectified_calib.euler_xyz.tolist() if rectified_calib.euler_xyz is not None else None
-            })
-            
+        if rectified_calib.save_corners_csv(rectified_csv_path):
+            print(f"Saved rectified corners CSV:   '{rectified_csv_path}'")
+
+        # 5. Output JSON result using instance helper
         rectified_json_path = os.path.join(rectified_out_dir, f"{rectified_base_name}_results.json")
-        with open(rectified_json_path, "w") as f:
-            json.dump(rectified_results_data, f, indent=4)
+        rectified_calib.save_results_json(
+            rectified_json_path,
+            image_path=path_rectified,
+            timestamp=timestamp,
+            squares_x=args.squares_x,
+            squares_y=args.squares_y,
+            square_length=args.square_length,
+            marker_length=args.marker_length
+        )
         print(f"Saved rectified results JSON:  '{rectified_json_path}'")
-        
+
     print("Combined Pipeline executed successfully!")
 
 if __name__ == "__main__":

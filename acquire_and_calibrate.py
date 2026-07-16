@@ -9,26 +9,8 @@ import cv2
 
 # Add current directory to path so we can import detect_charuco
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-from detect_charuco import CameraCalibration
+from detect_charuco import CameraCalibration, DICT_MAPPING
 
-DICT_MAPPING = {
-    'DICT_4X4_50': cv2.aruco.DICT_4X4_50,
-    'DICT_4X4_100': cv2.aruco.DICT_4X4_100,
-    'DICT_4X4_250': cv2.aruco.DICT_4X4_250,
-    'DICT_4X4_1000': cv2.aruco.DICT_4X4_1000,
-    'DICT_5X5_50': cv2.aruco.DICT_5X5_50,
-    'DICT_5X5_100': cv2.aruco.DICT_5X5_100,
-    'DICT_5X5_250': cv2.aruco.DICT_5X5_250,
-    'DICT_5X5_1000': cv2.aruco.DICT_5X5_1000,
-    'DICT_6X6_50': cv2.aruco.DICT_6X6_50,
-    'DICT_6X6_100': cv2.aruco.DICT_6X6_100,
-    'DICT_6X6_250': cv2.aruco.DICT_6X6_250,
-    'DICT_6X6_1000': cv2.aruco.DICT_6X6_1000,
-    'DICT_7X7_50': cv2.aruco.DICT_7X7_50,
-    'DICT_7X7_100': cv2.aruco.DICT_7X7_100,
-    'DICT_7X7_250': cv2.aruco.DICT_7X7_250,
-    'DICT_7X7_1000': cv2.aruco.DICT_7X7_1000
-}
 
 def main():
     parser = argparse.ArgumentParser(description="Acquire calibration images from an HTTP endpoint and perform camera calibration.")
@@ -181,65 +163,16 @@ def main():
     )
     
     if success:
-        print("\n===========================================================")
-        print(" MULTI-IMAGE CALIBRATION RESULTS")
-        print("===========================================================")
-        print(f"Successfully Calibrated Views: {len(results['image_paths'])}")
-        print(f"Reprojection Error (RMS):       {results['reproj_error']:.4f} pixels")
-        print("\nSolved Camera Matrix K:")
-        print(results['K'])
-        print("\nSolved Distortion Coefficients D:")
-        print(f"  k1, k2, p1, p2, k3 = {results['dist_coeffs'].flatten().tolist()}")
-        
-        # Save results to a json file in the directory
-        import json
+        CameraCalibration.print_calibration_results(results)
+
+        # Save calibration JSON to the output folder
         out_file = os.path.join(args.folder, "calibration_results.json")
-        data = {
-            'reproj_error': float(results['reproj_error']),
-            'K': results['K'].tolist(),
-            'dist_coeffs': results['dist_coeffs'].flatten().tolist(),
-            'image_size': results['image_size'],
-            'image_paths': [os.path.basename(p) for p in results['image_paths']]
-        }
-        with open(out_file, 'w') as f:
-            json.dump(data, f, indent=4)
+        CameraCalibration.save_calibration_json(results, out_file)
         print(f"\nSaved calibration results to: '{out_file}'")
-        
-        # Run individual analysis to output scale metrics (mm/pixel)
-        print("\n--- Scale Analysis per Image View ---")
-        for filepath in results['image_paths']:
-            try:
-                calib = CameraCalibration(
-                    image_path=filepath,
-                    squares_x=args.squares_x,
-                    squares_y=args.squares_y,
-                    square_length=args.square_length,
-                    marker_length=args.marker_length,
-                    dictionary_id=dict_id,
-                    corner_refinement_method=args.corner_refinement_method,
-                    corner_refinement_win_size=args.corner_refinement_win_size,
-                    try_refine_markers=args.try_refine_markers,
-                    min_marker_perimeter_rate=args.min_marker_perimeter_rate,
-                    adaptive_thresh_constant=args.adaptive_thresh_constant,
-                    adaptive_thresh_win_size_min=args.adaptive_thresh_win_size_min,
-                    adaptive_thresh_win_size_max=args.adaptive_thresh_win_size_max,
-                    adaptive_thresh_win_size_step=args.adaptive_thresh_win_size_step
-                )
-                if calib.detect_charuco():
-                    print(f"\nImage: {os.path.basename(filepath)}")
-                    if calib.mm_per_px_h is not None:
-                        print(f"  Horizontal scale: {calib.mm_per_px_h:.6f} mm/px ({calib.px_per_mm_h:.2f} px/mm)")
-                        print(f"  Vertical scale:   {calib.mm_per_px_v:.6f} mm/px ({calib.px_per_mm_v:.2f} px/mm)")
-                    if calib.pose_depth is not None:
-                        print(f"  Estimated Depth:  {calib.pose_depth:.2f} mm")
-                        print(f"  Scale from pose:  {calib.mm_per_px_pose:.6f} mm/px")
-            except Exception as e:
-                print(f"Warning: Failed to run analysis on {os.path.basename(filepath)}: {e}")
-        print("===========================================================")
     else:
         print("\nCalibration failed.")
-        print("===========================================================")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
