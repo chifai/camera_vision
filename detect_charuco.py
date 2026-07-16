@@ -925,7 +925,7 @@ class CameraCalibration:
                     
                     # Center the box
                     bg_pt1 = (mid[0] - tw // 2 - 4, mid[1] - th // 2 - 4)
-                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + tw // 2 + 4)
+                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + th // 2 + 4)
                     cv2.rectangle(plot_img, bg_pt1, bg_pt2, (0, 0, 0), -1)
                     cv2.putText(plot_img, text, (mid[0] - tw // 2, mid[1] + th // 2), font, scale, COLOR_YELLOW, thick, cv2.LINE_AA)
                     
@@ -956,7 +956,7 @@ class CameraCalibration:
                     (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
                     
                     bg_pt1 = (mid[0] - tw // 2 - 4, mid[1] - th // 2 - 4)
-                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + tw // 2 + 4)
+                    bg_pt2 = (mid[0] + tw // 2 + 4, mid[1] + th // 2 + 4)
                     cv2.rectangle(plot_img, bg_pt1, bg_pt2, (0, 0, 0), -1)
                     cv2.putText(plot_img, text, (mid[0] - tw // 2, mid[1] + th // 2), font, scale, COLOR_YELLOW, thick, cv2.LINE_AA)
                     
