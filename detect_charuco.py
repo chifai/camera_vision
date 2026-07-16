@@ -306,15 +306,55 @@ class CameraCalibration:
         self.collin_rms = float(np.sqrt(np.mean(np.square(all_deviations))))
         return self.collin_max, self.collin_rms
 
-    def detect_charuco(self, focal_length=None):
+    def detect_charuco(self, focal_length=None, auto_mirror=True):
         """Performs board detection, pose estimation, scale calculation, and distortion solving using class image self.img."""
         h, w = self.h, self.w
         
         # A. Detect Board
-        self.charuco_corners, self.charuco_ids, self.marker_corners, self.marker_ids = self.detector.detectBoard(self.img)
+        corners, ids, marker_corners, marker_ids = self.detector.detectBoard(self.img)
+        num_corners = len(corners) if corners is not None else 0
+        is_flipped = False
+        
+        # Check mirrored if auto_mirror is enabled
+        if auto_mirror:
+            flipped_img = cv2.flip(self.img, 1)
+            flipped_corners, flipped_ids, flipped_marker_corners, flipped_marker_ids = self.detector.detectBoard(flipped_img)
+            n_flipped_corners = len(flipped_corners) if flipped_corners is not None else 0
+            
+            if n_flipped_corners > num_corners:
+                # Map the flipped corners back to the original image coordinate frame
+                if flipped_corners is not None:
+                    flipped_corners[:, 0, 0] = w - 1 - flipped_corners[:, 0, 0]
+                
+                # Map the flipped marker corners back to the original image coordinate frame
+                if flipped_marker_corners is not None:
+                    mapped_marker_corners = []
+                    for mc in flipped_marker_corners:
+                        mc_orig = mc.copy()
+                        mc_orig[0, :, 0] = w - 1 - mc_orig[0, :, 0]
+                        # Re-index to maintain convention (0->1, 1->0, 2->3, 3->2)
+                        temp = mc_orig.copy()
+                        mc_orig[0, 0] = temp[0, 1]
+                        mc_orig[0, 1] = temp[0, 0]
+                        mc_orig[0, 2] = temp[0, 3]
+                        mc_orig[0, 3] = temp[0, 2]
+                        mapped_marker_corners.append(mc_orig)
+                    flipped_marker_corners = tuple(mapped_marker_corners)
+                
+                corners = flipped_corners
+                ids = flipped_ids
+                marker_corners = flipped_marker_corners
+                marker_ids = flipped_marker_ids
+                num_corners = n_flipped_corners
+                is_flipped = True
+                print("Using horizontally mirrored detection results to maximize corner count.")
+        
+        self.charuco_corners = corners
+        self.charuco_ids = ids
+        self.marker_corners = marker_corners
+        self.marker_ids = marker_ids
         
         num_markers = len(self.marker_ids) if self.marker_ids is not None else 0
-        num_corners = len(self.charuco_corners) if self.charuco_corners is not None else 0
         
         print(f"Detected {num_markers} ArUco markers.")
         print(f"Detected {num_corners} Charuco corners.")
@@ -1078,7 +1118,7 @@ def main():
     parser.add_argument("--crop", action="store_true", help="Crop the output image to remove invalid boundary/edge pixels (uses optimal camera matrix calculation)")
     
     # Detector/refinement tuning parameters
-    parser.add_argument("--corner_refinement_method", type=str, default="subpix", choices=["none", "subpix", "contour", "apriltag"],
+    parser.add_argument("--corner_refinement_method", type=str, default="apriltag", choices=["none", "subpix", "contour", "apriltag"],
                         help="Corner refinement method (default: subpix)")
     parser.add_argument("--corner_refinement_win_size", type=int, default=5,
                         help="Window size for subpixel corner refinement (default: 5)")
@@ -1094,6 +1134,10 @@ def main():
                         help="Adaptive threshold window size max (default: None/OpenCV default)")
     parser.add_argument("--adaptive_thresh_win_size_step", type=int, default=None,
                         help="Adaptive threshold window size step (default: None/OpenCV default)")
+    parser.add_argument("--auto_mirror", action="store_true", default=True,
+                        help="Automatically try mirrored image to maximize corner detection (default: True)")
+    parser.add_argument("--no_auto_mirror", action="store_false", dest="auto_mirror",
+                        help="Disable auto mirroring")
     parser.add_argument("--output_dir", type=str, default="./output",
                         help="Base directory for output files (default: ./output)")
     parser.add_argument("--format", type=str, default="png", choices=["png", "jpg", "jpeg"],
@@ -1117,6 +1161,7 @@ def main():
             squares_y=args.squares_y,
             square_length=args.square_length,
             marker_length=args.marker_length,
+            auto_mirror=args.auto_mirror,
             corner_refinement_method=args.corner_refinement_method,
             corner_refinement_win_size=args.corner_refinement_win_size,
             try_refine_markers=args.try_refine_markers,
@@ -1160,7 +1205,7 @@ def main():
         
     print(f"\nLoaded raw image: '{calib.image_path}' ({calib.w} x {calib.h} pixels)")
     
-    success = calib.detect_charuco(focal_length=args.focal_length)
+    success = calib.detect_charuco(focal_length=args.focal_length, auto_mirror=args.auto_mirror)
     if not success:
         print("Pipeline aborted due to detection or solving failure.")
         sys.exit(1)
@@ -1235,9 +1280,9 @@ def main():
     print(f"Saved corners plot:      '{path_corners_plot}'")
 
     if args.undistort:
-        undist_only_img = calib.undistort(rectify=False, dist_coeffs=calib.dist_coeffs, crop=args.crop)
+        undist_only_img = calib.undistort(rectify=False, dist_coeffs=None, crop=args.crop)
         undist_rectified_img, comparison_img = calib.undistort(
-            rectify=True, rvec=calib.rvec, dist_coeffs=calib.dist_coeffs,
+            rectify=True, rvec=calib.rvec, dist_coeffs=None,
             return_comparison=True, crop=args.crop
         )
         suffix = "_cropped" if args.crop else ""
@@ -1304,7 +1349,7 @@ def main():
         print(f"Error loading rectified image: {e}")
         sys.exit(1)
         
-    rectified_success = rectified_calib.detect_charuco(focal_length=args.focal_length)
+    rectified_success = rectified_calib.detect_charuco(focal_length=args.focal_length, auto_mirror=args.auto_mirror)
     if not rectified_success:
         print("Second-pass detection on rectified image failed or not enough corners found.")
     else:

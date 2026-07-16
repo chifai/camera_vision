@@ -139,6 +139,68 @@ class TestCharucoDetection(unittest.TestCase):
             self.assertEqual(data["reproj_error"], 0.15)
             self.assertEqual(data["image_paths"], ["img1.png"])
 
+    def test_single_image_auto_mirror(self):
+        """Verify that single image auto-mirroring detects and flips corners back correctly."""
+        import tempfile
+        import cv2
+        
+        # 1. Load original image and flip it horizontally
+        original_img = cv2.imread(self.image_path)
+        flipped_img = cv2.flip(original_img, 1)
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            flipped_path = os.path.join(tmpdir, "flipped.png")
+            cv2.imwrite(flipped_path, flipped_img)
+            
+            # 2. Test detect_charuco with auto_mirror=False (should fail or find less corners)
+            calib_no_mirror = CameraCalibration(
+                image_path=flipped_path,
+                squares_x=7,
+                squares_y=5,
+                square_length=3.5,
+                marker_length=2.0,
+                corner_refinement_method="apriltag",
+                try_refine_markers=True
+            )
+            success_no_mirror = calib_no_mirror.detect_charuco(auto_mirror=False)
+            # Flipped image has mirrored markers; ArUco dictionary is not mirror-invariant.
+            # Thus, ArUco detection should detect 0 markers and 0 corners.
+            self.assertFalse(success_no_mirror)
+            self.assertTrue(calib_no_mirror.charuco_corners is None or len(calib_no_mirror.charuco_corners) == 0)
+            
+            # 3. Test detect_charuco with auto_mirror=True (should succeed by internally flipping)
+            calib_mirror = CameraCalibration(
+                image_path=flipped_path,
+                squares_x=7,
+                squares_y=5,
+                square_length=3.5,
+                marker_length=2.0,
+                corner_refinement_method="apriltag",
+                try_refine_markers=True
+            )
+            success_mirror = calib_mirror.detect_charuco(auto_mirror=True)
+            self.assertTrue(success_mirror)
+            self.assertEqual(len(calib_mirror.charuco_corners), 22)
+            self.assertEqual(len(calib_mirror.marker_ids), 16)
+            
+            # 4. Assert that mapped-back corner coords match the mirrored original coordinates
+            # For each corner, the mirrored original coordinate is (w - 1 - x_orig)
+            h, w = original_img.shape[:2]
+            for i in range(len(self.calib.charuco_ids)):
+                cid = self.calib.charuco_ids[i][0]
+                # Find matching corner in calib_mirror
+                idx_mirror = np.where(calib_mirror.charuco_ids == cid)[0][0]
+                
+                orig_pt = self.calib.charuco_corners[i][0]
+                mirror_pt = calib_mirror.charuco_corners[idx_mirror][0]
+                
+                # The x-coordinate in mirror_pt must be w - 1 - orig_pt[x]
+                expected_x = w - 1 - orig_pt[0]
+                self.assertAlmostEqual(mirror_pt[0], expected_x, delta=1.0)
+                # y-coordinate should be identical
+                self.assertAlmostEqual(mirror_pt[1], orig_pt[1], delta=1.0)
+
 if __name__ == "__main__":
     unittest.main()
+
 
