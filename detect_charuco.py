@@ -724,10 +724,21 @@ class CameraCalibration:
         map1, map2 = cv2.initUndistortRectifyMap(K, D, R_rect, K_new, (w, h), cv2.CV_32FC1)
         processed_img = cv2.remap(img_to_process, map1, map2, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
         
-        if crop and roi is not None:
-            x, y, w_roi, h_roi = roi
-            if w_roi > 0 and h_roi > 0:
-                processed_img = processed_img[y:y+h_roi, x:x+w_roi]
+        if crop:
+            if rectify and rvec is not None:
+                # Crop to the bounding box of the valid non-white warped area
+                gray = cv2.cvtColor(processed_img, cv2.COLOR_BGR2GRAY)
+                _, thresh = cv2.threshold(gray, 254, 255, cv2.THRESH_BINARY_INV)
+                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    c = max(contours, key=cv2.contourArea)
+                    x_c, y_c, w_c, h_c = cv2.boundingRect(c)
+                    if w_c > 0 and h_c > 0:
+                        processed_img = processed_img[y_c:y_c+h_c, x_c:x_c+w_c]
+            elif roi is not None:
+                x, y, w_roi, h_roi = roi
+                if w_roi > 0 and h_roi > 0:
+                    processed_img = processed_img[y:y+h_roi, x:x+w_roi]
 
         if return_comparison:
             # Generate annotated image
