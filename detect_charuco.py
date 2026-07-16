@@ -235,6 +235,7 @@ class CameraCalibration:
         self.charuco_ids = None
         self.marker_corners = None
         self.marker_ids = None
+        self.mirror_state = "none"
         
         self.K = None
         self.dist_coeffs = None
@@ -313,46 +314,85 @@ class CameraCalibration:
         # A. Detect Board
         corners, ids, marker_corners, marker_ids = self.detector.detectBoard(self.img)
         num_corners = len(corners) if corners is not None else 0
-        is_flipped = False
+        best_corners = corners
+        best_ids = ids
+        best_marker_corners = marker_corners
+        best_marker_ids = marker_ids
+        
+        # Initialize mirror state
+        self.mirror_state = "none"
         
         # Check mirrored if auto_mirror is enabled
         if auto_mirror:
-            flipped_img = cv2.flip(self.img, 1)
-            flipped_corners, flipped_ids, flipped_marker_corners, flipped_marker_ids = self.detector.detectBoard(flipped_img)
-            n_flipped_corners = len(flipped_corners) if flipped_corners is not None else 0
+            # 1. Try horizontal flip
+            flipped_h_img = cv2.flip(self.img, 1)
+            flipped_h_corners, flipped_h_ids, flipped_h_marker_corners, flipped_h_marker_ids = self.detector.detectBoard(flipped_h_img)
+            n_flipped_h_corners = len(flipped_h_corners) if flipped_h_corners is not None else 0
             
-            if n_flipped_corners > num_corners:
-                # Map the flipped corners back to the original image coordinate frame
-                if flipped_corners is not None:
-                    flipped_corners[:, 0, 0] = w - 1 - flipped_corners[:, 0, 0]
-                
-                # Map the flipped marker corners back to the original image coordinate frame
-                if flipped_marker_corners is not None:
-                    mapped_marker_corners = []
-                    for mc in flipped_marker_corners:
-                        mc_orig = mc.copy()
-                        mc_orig[0, :, 0] = w - 1 - mc_orig[0, :, 0]
-                        # Re-index to maintain convention (0->1, 1->0, 2->3, 3->2)
-                        temp = mc_orig.copy()
-                        mc_orig[0, 0] = temp[0, 1]
-                        mc_orig[0, 1] = temp[0, 0]
-                        mc_orig[0, 2] = temp[0, 3]
-                        mc_orig[0, 3] = temp[0, 2]
-                        mapped_marker_corners.append(mc_orig)
-                    flipped_marker_corners = tuple(mapped_marker_corners)
-                
-                corners = flipped_corners
-                ids = flipped_ids
-                marker_corners = flipped_marker_corners
-                marker_ids = flipped_marker_ids
-                num_corners = n_flipped_corners
-                is_flipped = True
-                print("Using horizontally mirrored detection results to maximize corner count.")
+            # 2. Try vertical flip
+            flipped_v_img = cv2.flip(self.img, 0)
+            flipped_v_corners, flipped_v_ids, flipped_v_marker_corners, flipped_v_marker_ids = self.detector.detectBoard(flipped_v_img)
+            n_flipped_v_corners = len(flipped_v_corners) if flipped_v_corners is not None else 0
+            
+            # Determine which yields the most corners
+            if n_flipped_h_corners > num_corners or n_flipped_v_corners > num_corners:
+                if n_flipped_h_corners >= n_flipped_v_corners:
+                    # HORIZONTAL FLIP
+                    if flipped_h_corners is not None:
+                        flipped_h_corners[:, 0, 0] = w - 1 - flipped_h_corners[:, 0, 0]
+                    
+                    if flipped_h_marker_corners is not None:
+                        mapped_marker_corners = []
+                        for mc in flipped_h_marker_corners:
+                            mc_orig = mc.copy()
+                            mc_orig[0, :, 0] = w - 1 - mc_orig[0, :, 0]
+                            # Re-index to maintain convention (0->1, 1->0, 2->3, 3->2)
+                            temp = mc_orig.copy()
+                            mc_orig[0, 0] = temp[0, 1]
+                            mc_orig[0, 1] = temp[0, 0]
+                            mc_orig[0, 2] = temp[0, 3]
+                            mc_orig[0, 3] = temp[0, 2]
+                            mapped_marker_corners.append(mc_orig)
+                        flipped_h_marker_corners = tuple(mapped_marker_corners)
+                    
+                    best_corners = flipped_h_corners
+                    best_ids = flipped_h_ids
+                    best_marker_corners = flipped_h_marker_corners
+                    best_marker_ids = flipped_h_marker_ids
+                    num_corners = n_flipped_h_corners
+                    self.mirror_state = "flip_horizontal"
+                    print("Using horizontally mirrored detection results to maximize corner count.")
+                else:
+                    # VERTICAL FLIP
+                    if flipped_v_corners is not None:
+                        flipped_v_corners[:, 0, 1] = h - 1 - flipped_v_corners[:, 0, 1]
+                    
+                    if flipped_v_marker_corners is not None:
+                        mapped_marker_corners = []
+                        for mc in flipped_v_marker_corners:
+                            mc_orig = mc.copy()
+                            mc_orig[0, :, 1] = h - 1 - mc_orig[0, :, 1]
+                            # Re-index to maintain convention (0->3, 1->2, 2->1, 3->0)
+                            temp = mc_orig.copy()
+                            mc_orig[0, 0] = temp[0, 3]
+                            mc_orig[0, 1] = temp[0, 2]
+                            mc_orig[0, 2] = temp[0, 1]
+                            mc_orig[0, 3] = temp[0, 0]
+                            mapped_marker_corners.append(mc_orig)
+                        flipped_v_marker_corners = tuple(mapped_marker_corners)
+                    
+                    best_corners = flipped_v_corners
+                    best_ids = flipped_v_ids
+                    best_marker_corners = flipped_v_marker_corners
+                    best_marker_ids = flipped_v_marker_ids
+                    num_corners = n_flipped_v_corners
+                    self.mirror_state = "flip_vertical"
+                    print("Using vertically mirrored detection results to maximize corner count.")
         
-        self.charuco_corners = corners
-        self.charuco_ids = ids
-        self.marker_corners = marker_corners
-        self.marker_ids = marker_ids
+        self.charuco_corners = best_corners
+        self.charuco_ids = best_ids
+        self.marker_corners = best_marker_corners
+        self.marker_ids = best_marker_ids
         
         num_markers = len(self.marker_ids) if self.marker_ids is not None else 0
         
@@ -542,6 +582,7 @@ class CameraCalibration:
             "marker_length": marker_length if marker_length is not None else self.marker_length,
             "detected_markers": len(self.marker_ids) if self.marker_ids is not None else 0,
             "detected_corners": len(self.charuco_corners) if self.charuco_corners is not None else 0,
+            "mirror_state": getattr(self, "mirror_state", "none"),
             "row_ratios_mm_per_px": {f"row_{r}": ratio for r, ratio in row_ratios.items()},
             "col_ratios_mm_per_px": {f"col_{c}": ratio for c, ratio in col_ratios.items()},
         }
@@ -1022,21 +1063,37 @@ class CameraCalibration:
             # Perform detection on original image
             corners, ids, marker_corners, marker_ids = detector.detectBoard(img)
             n_corners = len(corners) if corners is not None else 0
-            is_flipped = False
+            mirror_str = ""
             
             # Check mirrored if auto_mirror is enabled
             if auto_mirror:
-                flipped_img = cv2.flip(img, 1)
-                flipped_corners, flipped_ids, _, _ = detector.detectBoard(flipped_img)
-                n_flipped_corners = len(flipped_corners) if flipped_corners is not None else 0
+                # Try horizontal flip
+                flipped_h_img = cv2.flip(img, 1)
+                flipped_h_corners, flipped_h_ids, _, _ = detector.detectBoard(flipped_h_img)
+                n_flipped_h_corners = len(flipped_h_corners) if flipped_h_corners is not None else 0
                 
-                if n_flipped_corners > n_corners:
-                    # Map the flipped corners back to the original image coordinate frame
-                    flipped_corners[:, 0, 0] = w - 1 - flipped_corners[:, 0, 0]
-                    corners = flipped_corners
-                    ids = flipped_ids
-                    n_corners = n_flipped_corners
-                    is_flipped = True
+                # Try vertical flip
+                flipped_v_img = cv2.flip(img, 0)
+                flipped_v_corners, flipped_v_ids, _, _ = detector.detectBoard(flipped_v_img)
+                n_flipped_v_corners = len(flipped_v_corners) if flipped_v_corners is not None else 0
+                
+                if n_flipped_h_corners > n_corners or n_flipped_v_corners > n_corners:
+                    if n_flipped_h_corners >= n_flipped_v_corners:
+                        # Map horizontal flip back
+                        if flipped_h_corners is not None:
+                            flipped_h_corners[:, 0, 0] = w - 1 - flipped_h_corners[:, 0, 0]
+                        corners = flipped_h_corners
+                        ids = flipped_h_ids
+                        n_corners = n_flipped_h_corners
+                        mirror_str = " (Mirrored Horizontal)"
+                    else:
+                        # Map vertical flip back
+                        if flipped_v_corners is not None:
+                            flipped_v_corners[:, 0, 1] = h - 1 - flipped_v_corners[:, 0, 1]
+                        corners = flipped_v_corners
+                        ids = flipped_v_ids
+                        n_corners = n_flipped_v_corners
+                        mirror_str = " (Mirrored Vertical)"
             
             if n_corners >= 4:
                 # Proactively check homography to prevent calibration crashes due to degenerate/collinear corner points
@@ -1052,7 +1109,6 @@ class CameraCalibration:
                 all_corners.append(corners)
                 all_ids.append(ids)
                 used_image_paths.append(filepath)
-                mirror_str = " (Mirrored)" if is_flipped else ""
                 print(f"  Processed '{os.path.basename(filepath)}'{mirror_str}: detected {n_corners} corners.")
             else:
                 print(f"  Skipping '{os.path.basename(filepath)}': only {n_corners} corners detected (minimum 4 required).")

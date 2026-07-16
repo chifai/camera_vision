@@ -143,16 +143,20 @@ class TestCharucoDetection(unittest.TestCase):
         """Verify that single image auto-mirroring detects and flips corners back correctly."""
         import tempfile
         import cv2
+        import json
         
-        # 1. Load original image and flip it horizontally
+        # ----------------------------------------------------
+        # 1. Test Horizontal Flip
+        # ----------------------------------------------------
         original_img = cv2.imread(self.image_path)
-        flipped_img = cv2.flip(original_img, 1)
+        h, w = original_img.shape[:2]
+        flipped_h_img = cv2.flip(original_img, 1)
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            flipped_path = os.path.join(tmpdir, "flipped.png")
-            cv2.imwrite(flipped_path, flipped_img)
+            flipped_path = os.path.join(tmpdir, "flipped_h.png")
+            cv2.imwrite(flipped_path, flipped_h_img)
             
-            # 2. Test detect_charuco with auto_mirror=False (should fail or find less corners)
+            # auto_mirror=False (should fail or find less corners)
             calib_no_mirror = CameraCalibration(
                 image_path=flipped_path,
                 squares_x=7,
@@ -163,12 +167,10 @@ class TestCharucoDetection(unittest.TestCase):
                 try_refine_markers=True
             )
             success_no_mirror = calib_no_mirror.detect_charuco(auto_mirror=False)
-            # Flipped image has mirrored markers; ArUco dictionary is not mirror-invariant.
-            # Thus, ArUco detection should detect 0 markers and 0 corners.
             self.assertFalse(success_no_mirror)
-            self.assertTrue(calib_no_mirror.charuco_corners is None or len(calib_no_mirror.charuco_corners) == 0)
+            self.assertEqual(calib_no_mirror.mirror_state, "none")
             
-            # 3. Test detect_charuco with auto_mirror=True (should succeed by internally flipping)
+            # auto_mirror=True (should succeed by internally horizontal flipping)
             calib_mirror = CameraCalibration(
                 image_path=flipped_path,
                 squares_x=7,
@@ -180,25 +182,64 @@ class TestCharucoDetection(unittest.TestCase):
             )
             success_mirror = calib_mirror.detect_charuco(auto_mirror=True)
             self.assertTrue(success_mirror)
+            self.assertEqual(calib_mirror.mirror_state, "flip_horizontal")
             self.assertEqual(len(calib_mirror.charuco_corners), 22)
             self.assertEqual(len(calib_mirror.marker_ids), 16)
             
-            # 4. Assert that mapped-back corner coords match the mirrored original coordinates
-            # For each corner, the mirrored original coordinate is (w - 1 - x_orig)
-            h, w = original_img.shape[:2]
+            # Assert mapped-back corners
             for i in range(len(self.calib.charuco_ids)):
                 cid = self.calib.charuco_ids[i][0]
-                # Find matching corner in calib_mirror
                 idx_mirror = np.where(calib_mirror.charuco_ids == cid)[0][0]
-                
                 orig_pt = self.calib.charuco_corners[i][0]
                 mirror_pt = calib_mirror.charuco_corners[idx_mirror][0]
-                
-                # The x-coordinate in mirror_pt must be w - 1 - orig_pt[x]
-                expected_x = w - 1 - orig_pt[0]
-                self.assertAlmostEqual(mirror_pt[0], expected_x, delta=1.0)
-                # y-coordinate should be identical
+                self.assertAlmostEqual(mirror_pt[0], w - 1 - orig_pt[0], delta=1.0)
                 self.assertAlmostEqual(mirror_pt[1], orig_pt[1], delta=1.0)
+                
+            # Verify json contains mirror_state
+            json_path = os.path.join(tmpdir, "results.json")
+            calib_mirror.save_results_json(json_path)
+            with open(json_path, "r") as f:
+                res_data = json.load(f)
+            self.assertEqual(res_data["mirror_state"], "flip_horizontal")
+
+        # ----------------------------------------------------
+        # 2. Test Vertical Flip
+        # ----------------------------------------------------
+        flipped_v_img = cv2.flip(original_img, 0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            flipped_path = os.path.join(tmpdir, "flipped_v.png")
+            cv2.imwrite(flipped_path, flipped_v_img)
+            
+            # auto_mirror=True (should succeed by internally vertical flipping)
+            calib_mirror = CameraCalibration(
+                image_path=flipped_path,
+                squares_x=7,
+                squares_y=5,
+                square_length=3.5,
+                marker_length=2.0,
+                corner_refinement_method="apriltag",
+                try_refine_markers=True
+            )
+            success_mirror = calib_mirror.detect_charuco(auto_mirror=True)
+            self.assertTrue(success_mirror)
+            self.assertEqual(calib_mirror.mirror_state, "flip_vertical")
+            self.assertEqual(len(calib_mirror.charuco_corners), 22)
+            
+            # Assert mapped-back corners
+            for i in range(len(self.calib.charuco_ids)):
+                cid = self.calib.charuco_ids[i][0]
+                idx_mirror = np.where(calib_mirror.charuco_ids == cid)[0][0]
+                orig_pt = self.calib.charuco_corners[i][0]
+                mirror_pt = calib_mirror.charuco_corners[idx_mirror][0]
+                self.assertAlmostEqual(mirror_pt[0], orig_pt[0], delta=1.0)
+                self.assertAlmostEqual(mirror_pt[1], h - 1 - orig_pt[1], delta=1.0)
+                
+            # Verify json contains mirror_state
+            json_path = os.path.join(tmpdir, "results.json")
+            calib_mirror.save_results_json(json_path)
+            with open(json_path, "r") as f:
+                res_data = json.load(f)
+            self.assertEqual(res_data["mirror_state"], "flip_vertical")
 
 if __name__ == "__main__":
     unittest.main()
